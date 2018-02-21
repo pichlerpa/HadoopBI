@@ -1,0 +1,808 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="Application">
+    <start to="Application_start"/>
+    <fork name="Application_start">
+        <path start="Import_DeliveryMethods"/>
+        <path start="Import_PaymentMethods"/>
+        <path start="Import_TransactionTypes"/>
+        <path start="Import_Cities"/>
+        <path start="Import_Countries"/>
+        <path start="Import_People"/>
+        <path start="Import_StateProvinces"/>
+        <path start="Import_SystemParameters"/>
+    </fork>
+    <join name="Application_end" to="end"/>
+    <action name="Import_DeliveryMethods">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/DeliveryMethods</arg>
+            <arg>--query</arg>
+            <arg>SELECT [DeliveryMethodID]       ,[DeliveryMethodName]       ,[LastEditedBy]   FROM [Application].[DeliveryMethods] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.DeliveryMethods</arg>
+        </sqoop>
+        <ok to="Merge_DeliveryMethods"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_DeliveryMethods">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.DeliveryMethods STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.DeliveryMethods where 1=0;
+ALTER TABLE Staging.DeliveryMethods CLUSTERED BY(DeliveryMethodID) INTO 5 BUCKETS;
+ALTER TABLE Staging.DeliveryMethods SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.DeliveryMethods AS TARGET
+USING (
+SELECT DeliveryMethodID as join_key, TEMP.* from Temporal.DeliveryMethods TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.DeliveryMethods AS TEMP JOIN Staging.DeliveryMethods STAGE ON TEMP.DeliveryMethodID = STAGE.DeliveryMethodID 
+	   WHERE (TEMP.DeliveryMethodName != STAGE.DeliveryMethodName OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.DeliveryMethodID
+WHEN MATCHED AND (
+	TARGET.DeliveryMethodName != SOURCE.DeliveryMethodName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 DeliveryMethodName = SOURCE.DeliveryMethodName 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.DeliveryMethodID,SOURCE.DeliveryMethodName,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_DeliveryMethods"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_DeliveryMethods">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_DeliveryMethods AS 
+Select * from Staging.DeliveryMethods STAGE
+WHERE STAGE.DeliveryMethodID NOT IN (Select DeliveryMethodID from Temporal.DeliveryMethods) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.DeliveryMethods AS TARGET
+USING TMP_DELETE_DeliveryMethods SOURCE
+	ON SOURCE.DeliveryMethodID = TARGET.DeliveryMethodID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_PaymentMethods">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/PaymentMethods</arg>
+            <arg>--query</arg>
+            <arg>SELECT [PaymentMethodID]       ,[PaymentMethodName]       ,[LastEditedBy]   FROM [Application].[PaymentMethods] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.PaymentMethods</arg>
+        </sqoop>
+        <ok to="Merge_PaymentMethods"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_PaymentMethods">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.PaymentMethods STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.PaymentMethods where 1=0;
+ALTER TABLE Staging.PaymentMethods CLUSTERED BY(PaymentMethodID) INTO 5 BUCKETS;
+ALTER TABLE Staging.PaymentMethods SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.PaymentMethods AS TARGET
+USING (
+SELECT PaymentMethodID as join_key, TEMP.* from Temporal.PaymentMethods TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.PaymentMethods AS TEMP JOIN Staging.PaymentMethods STAGE ON TEMP.PaymentMethodID = STAGE.PaymentMethodID 
+	   WHERE (TEMP.PaymentMethodName != STAGE.PaymentMethodName OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.PaymentMethodID
+WHEN MATCHED AND (
+	TARGET.PaymentMethodName != SOURCE.PaymentMethodName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 PaymentMethodName = SOURCE.PaymentMethodName 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.PaymentMethodID,SOURCE.PaymentMethodName,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_PaymentMethods"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_PaymentMethods">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_PaymentMethods AS 
+Select * from Staging.PaymentMethods STAGE
+WHERE STAGE.PaymentMethodID NOT IN (Select PaymentMethodID from Temporal.PaymentMethods) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.PaymentMethods AS TARGET
+USING TMP_DELETE_PaymentMethods SOURCE
+	ON SOURCE.PaymentMethodID = TARGET.PaymentMethodID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_TransactionTypes">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/TransactionTypes</arg>
+            <arg>--query</arg>
+            <arg>SELECT [TransactionTypeID]       ,[TransactionTypeName]       ,[LastEditedBy]   FROM [Application].[TransactionTypes] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.TransactionTypes</arg>
+        </sqoop>
+        <ok to="Merge_TransactionTypes"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_TransactionTypes">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.TransactionTypes STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.TransactionTypes where 1=0;
+ALTER TABLE Staging.TransactionTypes CLUSTERED BY(TransactionTypeID) INTO 5 BUCKETS;
+ALTER TABLE Staging.TransactionTypes SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.TransactionTypes AS TARGET
+USING (
+SELECT TransactionTypeID as join_key, TEMP.* from Temporal.TransactionTypes TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.TransactionTypes AS TEMP JOIN Staging.TransactionTypes STAGE ON TEMP.TransactionTypeID = STAGE.TransactionTypeID 
+	   WHERE (TEMP.TransactionTypeName != STAGE.TransactionTypeName OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.TransactionTypeID
+WHEN MATCHED AND (
+	TARGET.TransactionTypeName != SOURCE.TransactionTypeName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 TransactionTypeName = SOURCE.TransactionTypeName 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.TransactionTypeID,SOURCE.TransactionTypeName,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_TransactionTypes"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_TransactionTypes">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_TransactionTypes AS 
+Select * from Staging.TransactionTypes STAGE
+WHERE STAGE.TransactionTypeID NOT IN (Select TransactionTypeID from Temporal.TransactionTypes) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.TransactionTypes AS TARGET
+USING TMP_DELETE_TransactionTypes SOURCE
+	ON SOURCE.TransactionTypeID = TARGET.TransactionTypeID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_Cities">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/Cities</arg>
+            <arg>--query</arg>
+            <arg>SELECT [CityID]       ,[CityName]       ,[StateProvinceID]       ,CAST([Location] as nvarchar(max)) as Location       ,[LatestRecordedPopulation]       ,[LastEditedBy]   FROM [Application].[Cities] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.Cities</arg>
+        </sqoop>
+        <ok to="Merge_Cities"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_Cities">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.Cities STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.Cities where 1=0;
+ALTER TABLE Staging.Cities CLUSTERED BY(CityID) INTO 5 BUCKETS;
+ALTER TABLE Staging.Cities SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.Cities AS TARGET
+USING (
+SELECT CityID as join_key, TEMP.* from Temporal.Cities TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.Cities AS TEMP JOIN Staging.Cities STAGE ON TEMP.CityID = STAGE.CityID 
+	   WHERE (TEMP.CityName != STAGE.CityName OR
+	          TEMP.StateProvinceID != STAGE.StateProvinceID OR
+	          TEMP.Location != STAGE.Location OR
+	          TEMP.LatestRecordedPopulation != STAGE.LatestRecordedPopulation OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.CityID	
+
+WHEN MATCHED AND (
+	TARGET.CityName != SOURCE.CityName OR
+	TARGET.StateProvinceID != SOURCE.StateProvinceID OR
+	TARGET.Location != SOURCE.Location OR
+	TARGET.LatestRecordedPopulation != SOURCE.LatestRecordedPopulation OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 CityName = SOURCE.CityName 
+		,StateProvinceID = SOURCE.StateProvinceID 
+		,Location = SOURCE.Location 
+		,LatestRecordedPopulation = SOURCE.LatestRecordedPopulation 
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.CityID,SOURCE.CityName,SOURCE.StateProvinceID,SOURCE.Location,SOURCE.LatestRecordedPopulation,SOURCE.LastEditedBy
+		      ,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_Cities"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_Cities">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_Cities AS 
+Select * from Staging.Cities STAGE
+WHERE STAGE.CityID NOT IN (Select CityID from Temporal.Cities) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.Cities AS TARGET
+USING TMP_DELETE_Cities SOURCE
+	ON SOURCE.CityID = TARGET.CityID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_Countries">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/Countries</arg>
+            <arg>--query</arg>
+            <arg>SELECT [CountryID]       ,[CountryName]       ,[FormalName]       ,[IsoAlpha3Code]       ,[IsoNumericCode]       ,[CountryType]       ,[LatestRecordedPopulation]       ,[Continent]       ,[Region]       ,[Subregion]       ,CAST(Border as nvarchar(max)) as Border       ,[LastEditedBy]     FROM [Application].[Countries] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.Countries</arg>
+        </sqoop>
+        <ok to="Merge_Countries"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_Countries">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.Countries STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.Countries where 1=0;
+ALTER TABLE Staging.Countries CLUSTERED BY(CountryID) INTO 5 BUCKETS;
+ALTER TABLE Staging.Countries SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.Countries AS TARGET
+USING (
+SELECT CountryID as join_key, TEMP.* from Temporal.Countries TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.Countries AS TEMP JOIN Staging.Countries STAGE ON TEMP.CountryID = STAGE.CountryID 
+	   WHERE (TEMP.CountryName != STAGE.CountryName OR
+	          TEMP.FormalName != STAGE.FormalName OR
+			  TEMP.IsoAlpha3Code != STAGE.IsoAlpha3Code OR
+	          TEMP.IsoNumericCode != STAGE.IsoNumericCode OR
+	          TEMP.CountryType != STAGE.CountryType OR
+	          TEMP.LatestRecordedPopulation != STAGE.LatestRecordedPopulation OR
+	          TEMP.Continent != STAGE.Continent OR
+	          TEMP.Region != STAGE.Region OR
+	          TEMP.Subregion != STAGE.Subregion OR
+	          TEMP.Border != STAGE.Border OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	        ON SOURCE.join_key = TARGET.CountryID
+	
+WHEN MATCHED AND (
+	TARGET.CountryName != SOURCE.CountryName OR
+	TARGET.FormalName != SOURCE.FormalName OR
+	TARGET.IsoAlpha3Code != SOURCE.IsoAlpha3Code OR
+	TARGET.IsoNumericCode != SOURCE.IsoNumericCode OR
+	TARGET.CountryType != SOURCE.CountryType OR
+	TARGET.LatestRecordedPopulation != SOURCE.LatestRecordedPopulation OR
+	TARGET.Continent != SOURCE.Continent OR
+	TARGET.Region != SOURCE.Region OR
+	TARGET.Subregion != SOURCE.Subregion OR
+	TARGET.Border != SOURCE.Border OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 CountryName = SOURCE.CountryName 
+		,FormalName = SOURCE.FormalName 
+		,IsoAlpha3Code = SOURCE.IsoAlpha3Code 
+		,IsoNumericCode = SOURCE.IsoNumericCode 
+		,CountryType = SOURCE.CountryType 
+		,LatestRecordedPopulation = SOURCE.LatestRecordedPopulation 
+		,Continent = SOURCE.Continent 
+		,Region = SOURCE.Region 
+		,Subregion = SOURCE.Subregion 
+		,Border = SOURCE.Border
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.CountryID,SOURCE.CountryName,SOURCE.FormalName,SOURCE.IsoAlpha3Code,SOURCE.IsoNumericCode,SOURCE.CountryType,SOURCE.LatestRecordedPopulation,SOURCE.Continent,SOURCE.Region,SOURCE.Subregion
+		      ,SOURCE.Border,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_Countries"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_Countries">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_Countries AS 
+Select * from Staging.Countries STAGE
+WHERE STAGE.CountryID NOT IN (Select CountryID from Temporal.Countries) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.Countries AS TARGET
+USING TMP_DELETE_Countries SOURCE
+	ON SOURCE.CountryID = TARGET.CountryID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_People">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/People</arg>
+            <arg>--query</arg>
+            <arg>SELECT [PersonID]       ,[FullName]       ,[PreferredName]       ,[SearchName]       ,[IsPermittedToLogon]       ,[LogonName]       ,[IsExternalLogonProvider]       ,[IsSystemUser]       ,[IsEmployee]       ,[IsSalesperson]       ,[UserPreferences]       ,[PhoneNumber]       ,[FaxNumber]       ,[EmailAddress]       ,CAST([Photo] AS NVARCHAR(max)) AS Photo       ,[CustomFields]       ,[OtherLanguages]       ,[LastEditedBy]   FROM [Application].[People] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.People</arg>
+        </sqoop>
+        <ok to="Merge_People"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_People">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.People STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.People where 1=0;
+ALTER TABLE Staging.People CLUSTERED BY(PersonID) INTO 5 BUCKETS;
+ALTER TABLE Staging.People SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.People AS TARGET
+USING (
+SELECT PersonID as join_key, TEMP.* from Temporal.People TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.People AS TEMP JOIN Staging.People STAGE ON TEMP.PersonID = STAGE.PersonID 
+	   WHERE (TEMP.FullName != STAGE.FullName OR
+			  TEMP.PreferredName != STAGE.PreferredName OR
+			  TEMP.SearchName != STAGE.SearchName OR
+			  TEMP.IsPermittedToLogon != STAGE.IsPermittedToLogon OR
+			  TEMP.LogonName != STAGE.LogonName OR
+			  TEMP.IsExternalLogonProvider != STAGE.IsExternalLogonProvider OR
+			  TEMP.IsSystemUser != STAGE.IsSystemUser OR
+			  TEMP.IsEmployee != STAGE.IsEmployee OR
+			  TEMP.IsSalesperson != STAGE.IsSalesperson OR
+			  TEMP.UserPreferences != STAGE.UserPreferences OR
+			  TEMP.PhoneNumber != STAGE.PhoneNumber OR
+			  TEMP.FaxNumber != STAGE.FaxNumber OR
+			  TEMP.EmailAddress != STAGE.EmailAddress OR
+			  TEMP.Photo != STAGE.Photo OR
+			  TEMP.CustomFields != STAGE.CustomFields OR
+			  TEMP.OtherLanguages != STAGE.OtherLanguages OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.PersonID
+	
+WHEN MATCHED AND (
+	TARGET.FullName != SOURCE.FullName OR
+	TARGET.PreferredName != SOURCE.PreferredName OR
+	TARGET.SearchName != SOURCE.SearchName OR
+	TARGET.IsPermittedToLogon != SOURCE.IsPermittedToLogon OR
+	TARGET.LogonName != SOURCE.LogonName OR
+	TARGET.IsExternalLogonProvider != SOURCE.IsExternalLogonProvider OR
+	TARGET.IsSystemUser != SOURCE.IsSystemUser OR
+	TARGET.IsEmployee != SOURCE.IsEmployee OR
+	TARGET.IsSalesperson != SOURCE.IsSalesperson OR
+	TARGET.UserPreferences != SOURCE.UserPreferences OR
+	TARGET.PhoneNumber != SOURCE.PhoneNumber OR
+	TARGET.FaxNumber != SOURCE.FaxNumber OR
+	TARGET.EmailAddress != SOURCE.EmailAddress OR
+	TARGET.Photo != SOURCE.Photo OR
+	TARGET.CustomFields != SOURCE.CustomFields OR
+	TARGET.OtherLanguages != SOURCE.OtherLanguages OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 FullName = SOURCE.FullName 
+		,PreferredName = SOURCE.PreferredName 
+		,SearchName = SOURCE.SearchName 
+		,IsPermittedToLogon = SOURCE.IsPermittedToLogon 
+		,LogonName = SOURCE.LogonName 
+		,IsExternalLogonProvider = SOURCE.IsExternalLogonProvider 
+		,IsSystemUser = SOURCE.IsSystemUser 
+		,IsEmployee = SOURCE.IsEmployee 
+		,IsSalesperson = SOURCE.IsSalesperson		
+		,UserPreferences = SOURCE.UserPreferences
+		,PhoneNumber = SOURCE.PhoneNumber
+		,FaxNumber = SOURCE.FaxNumber
+		,EmailAddress = SOURCE.EmailAddress
+		,Photo = SOURCE.Photo
+		,CustomFields = SOURCE.CustomFields
+		,OtherLanguages = SOURCE.OtherLanguages
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.PersonID,SOURCE.FullName,SOURCE.PreferredName,SOURCE.SearchName,SOURCE.IsPermittedToLogon,SOURCE.LogonName,SOURCE.IsExternalLogonProvider,SOURCE.IsSystemUser,SOURCE.IsEmployee
+		      ,SOURCE.IsSalesperson,SOURCE.UserPreferences,SOURCE.PhoneNumber,SOURCE.FaxNumber,SOURCE.EmailAddress,SOURCE.Photo,SOURCE.CustomFields,SOURCE.OtherLanguages,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_People"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_People">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_People AS 
+Select * from Staging.People STAGE
+WHERE STAGE.PersonID NOT IN (Select PersonID from Temporal.People) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.People AS TARGET
+USING TMP_DELETE_People SOURCE
+	ON SOURCE.PersonID = TARGET.PersonID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StateProvinces">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StateProvinces</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StateProvinceID]       ,[StateProvinceCode]       ,[StateProvinceName]       ,[CountryID]       ,[SalesTerritory]       ,CAST(Border as nvarchar(max)) as Border       ,[LatestRecordedPopulation]       ,[LastEditedBy]       FROM [Application].[StateProvinces] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StateProvinces</arg>
+        </sqoop>
+        <ok to="Merge_StateProvinces"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StateProvinces">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StateProvinces STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StateProvinces where 1=0;
+ALTER TABLE Staging.StateProvinces CLUSTERED BY(StateProvinceID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StateProvinces SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StateProvinces AS TARGET
+USING (
+SELECT StateProvinceID as join_key, TEMP.* from Temporal.StateProvinces TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StateProvinces AS TEMP JOIN Staging.StateProvinces STAGE ON TEMP.StateProvinceID = STAGE.StateProvinceID 
+	   WHERE (TEMP.StateProvinceCode != STAGE.StateProvinceCode OR
+			  TEMP.StateProvinceName != STAGE.StateProvinceName OR
+			  TEMP.CountryID != STAGE.CountryID OR
+			  TEMP.SalesTerritory != STAGE.SalesTerritory OR
+			  TEMP.Border != STAGE.Border OR
+			  TEMP.LatestRecordedPopulation != STAGE.LatestRecordedPopulation OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StateProvinceID
+	
+WHEN MATCHED AND (
+	TARGET.StateProvinceCode != SOURCE.StateProvinceCode OR
+	TARGET.StateProvinceName != SOURCE.StateProvinceName OR
+	TARGET.CountryID != SOURCE.CountryID OR
+	TARGET.SalesTerritory != SOURCE.SalesTerritory OR
+	TARGET.Border != SOURCE.Border OR
+	TARGET.LatestRecordedPopulation != SOURCE.LatestRecordedPopulation OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 StateProvinceCode = SOURCE.StateProvinceCode 
+		,StateProvinceName = SOURCE.StateProvinceName 
+		,CountryID = SOURCE.CountryID 
+		,SalesTerritory = SOURCE.SalesTerritory 
+		,Border = SOURCE.Border 
+		,LatestRecordedPopulation = SOURCE.LatestRecordedPopulation 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StateProvinceID,SOURCE.StateProvinceCode,SOURCE.StateProvinceName,SOURCE.CountryID,SOURCE.SalesTerritory,SOURCE.Border,SOURCE.LatestRecordedPopulation
+					,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StateProvinces"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StateProvinces">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StateProvinces AS 
+Select * from Staging.StateProvinces STAGE
+WHERE STAGE.StateProvinceID NOT IN (Select StateProvinceID from Temporal.StateProvinces) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StateProvinces AS TARGET
+USING TMP_DELETE_StateProvinces SOURCE
+	ON SOURCE.StateProvinceID = TARGET.StateProvinceID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_SystemParameters">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/SystemParameters</arg>
+            <arg>--query</arg>
+            <arg>SELECT [SystemParameterID]       ,[DeliveryAddressLine1]       ,[DeliveryAddressLine2]       ,[DeliveryCityID]       ,[DeliveryPostalCode]       ,CAST([DeliveryLocation] as nvarchar(max)) as DeliveryLocation       ,[PostalAddressLine1]       ,[PostalAddressLine2]       ,[PostalCityID]       ,[PostalPostalCode]       ,[ApplicationSettings]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Application].[SystemParameters]   WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.SystemParameters</arg>
+        </sqoop>
+        <ok to="Merge_SystemParameters"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_SystemParameters">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.SystemParameters STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.SystemParameters where 1=0;
+ALTER TABLE Staging.SystemParameters CLUSTERED BY(SystemParameterID) INTO 5 BUCKETS;
+ALTER TABLE Staging.SystemParameters SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.SystemParameters AS TARGET
+USING (
+SELECT SystemParameterID as join_key, TEMP.* from Temporal.SystemParameters TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.SystemParameters AS TEMP JOIN Staging.SystemParameters STAGE ON TEMP.SystemParameterID = STAGE.SystemParameterID 
+	   WHERE (TEMP.DeliveryAddressLine1 != STAGE.DeliveryAddressLine1 OR
+			  TEMP.DeliveryAddressLine2 != STAGE.DeliveryAddressLine2 OR
+			  TEMP.DeliveryCityID != STAGE.DeliveryCityID OR
+			  TEMP.DeliveryPostalCode != STAGE.DeliveryPostalCode OR
+			  TEMP.DeliveryLocation != STAGE.DeliveryLocation OR
+			  TEMP.PostalAddressLine1 != STAGE.PostalAddressLine1 OR
+			  TEMP.PostalAddressLine2 != STAGE.PostalAddressLine2 OR
+			  TEMP.PostalCityID != STAGE.PostalCityID OR
+			  TEMP.PostalPostalCode != STAGE.PostalPostalCode OR
+			  TEMP.ApplicationSettings != STAGE.ApplicationSettings OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.SystemParameterID
+	
+WHEN MATCHED AND (
+	TARGET.DeliveryAddressLine1 != SOURCE.DeliveryAddressLine1 OR
+	TARGET.DeliveryAddressLine2 != SOURCE.DeliveryAddressLine2 OR
+	TARGET.DeliveryCityID != SOURCE.DeliveryCityID OR
+	TARGET.DeliveryPostalCode != SOURCE.DeliveryPostalCode OR
+	TARGET.DeliveryLocation != SOURCE.DeliveryLocation OR
+	TARGET.PostalAddressLine1 != SOURCE.PostalAddressLine1 OR
+	TARGET.PostalAddressLine2 != SOURCE.PostalAddressLine2 OR
+	TARGET.PostalCityID != SOURCE.PostalCityID OR
+	TARGET.PostalPostalCode != SOURCE.PostalPostalCode OR
+	TARGET.ApplicationSettings != SOURCE.ApplicationSettings OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		 DeliveryAddressLine1 = SOURCE.DeliveryAddressLine1 
+		,DeliveryAddressLine2 = SOURCE.DeliveryAddressLine2 
+		,DeliveryCityID = SOURCE.DeliveryCityID 
+		,DeliveryPostalCode = SOURCE.DeliveryPostalCode 
+		,DeliveryLocation = SOURCE.DeliveryLocation 
+		,PostalAddressLine1 = SOURCE.PostalAddressLine1 
+		,PostalAddressLine2 = SOURCE.PostalAddressLine2 
+		,PostalCityID = SOURCE.PostalCityID 
+		,PostalPostalCode = SOURCE.PostalPostalCode 
+		,ApplicationSettings = SOURCE.ApplicationSettings		
+		,LastEditedBy = SOURCE.LastEditedBy
+		,LastEditedWhen = SOURCE.LastEditedWhen
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.SystemParameterID,SOURCE.DeliveryAddressLine1,SOURCE.DeliveryAddressLine2,SOURCE.DeliveryCityID,SOURCE.DeliveryPostalCode,SOURCE.DeliveryLocation,SOURCE.PostalAddressLine1,SOURCE.PostalAddressLine2,SOURCE.PostalCityID,SOURCE.PostalPostalCode
+		      ,SOURCE.ApplicationSettings,SOURCE.LastEditedBy,SOURCE.LastEditedWhen,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_SystemParameters"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_SystemParameters">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_SystemParameters AS 
+Select * from Staging.SystemParameters STAGE
+WHERE STAGE.SystemParameterID NOT IN (Select SystemParameterID from Temporal.SystemParameters) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.SystemParameters AS TARGET
+USING TMP_DELETE_SystemParameters SOURCE
+	ON SOURCE.SystemParameterID = TARGET.SystemParameterID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Application_end"/>
+        <error to="kill"/>
+    </action>
+    <kill name="kill">
+        <message>${wf:errorMessage(wf:lastErrorNode())}</message>
+    </kill>
+    <end name="end"/>
+</workflow-app>

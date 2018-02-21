@@ -1,0 +1,895 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="Warehouse">
+    <start to="Warehouse_start"/>
+    <fork name="Warehouse_start">
+        <path start="Import_ColdRoomTemperatures"/>
+        <path start="Import_Colors"/>
+        <path start="Import_PackageTypes"/>
+        <path start="Import_StockGroups"/>
+        <path start="Import_StockItemHoldings"/>
+        <path start="Import_StockItems"/>
+        <path start="Import_StockItemStockGroups"/>
+        <path start="Import_StockItemTransactions"/>
+        <path start="Import_VehicleTemperatures"/>
+    </fork>
+    <join name="Warehouse_end" to="end"/>
+    <action name="Import_ColdRoomTemperatures">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/ColdRoomTemperatures</arg>
+            <arg>--query</arg>
+            <arg>SELECT [ColdRoomTemperatureID]       ,[ColdRoomSensorNumber]       ,[RecordedWhen]       ,[Temperature]   FROM [Warehouse].[ColdRoomTemperatures] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.ColdRoomTemperatures</arg>
+        </sqoop>
+        <ok to="Merge_ColdRoomTemperatures"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_ColdRoomTemperatures">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.ColdRoomTemperatures STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.ColdRoomTemperatures where 1=0;
+ALTER TABLE Staging.ColdRoomTemperatures CLUSTERED BY(ColdRoomTemperatureID) INTO 5 BUCKETS;
+ALTER TABLE Staging.ColdRoomTemperatures SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.ColdRoomTemperatures AS TARGET
+USING (
+SELECT ColdRoomTemperatureID as join_key, TEMP.* from Temporal.ColdRoomTemperatures TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.ColdRoomTemperatures AS TEMP JOIN Staging.ColdRoomTemperatures STAGE ON TEMP.ColdRoomTemperatureID = STAGE.ColdRoomTemperatureID 
+	   WHERE (TEMP.ColdRoomSensorNumber != STAGE.ColdRoomSensorNumber OR
+			  TEMP.RecordedWhen != STAGE.RecordedWhen OR
+			  TEMP.Temperature != STAGE.Temperature) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.ColdRoomTemperatureID
+
+WHEN MATCHED AND (
+	TARGET.ColdRoomSensorNumber != SOURCE.ColdRoomSensorNumber OR
+	TARGET.RecordedWhen != SOURCE.RecordedWhen OR
+	TARGET.Temperature != SOURCE.Temperature)	THEN UPDATE SET
+		 ColdRoomSensorNumber = SOURCE.ColdRoomSensorNumber 
+		,RecordedWhen = SOURCE.RecordedWhen 
+		,Temperature = SOURCE.Temperature 
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.ColdRoomTemperatureID,SOURCE.ColdRoomSensorNumber,SOURCE.RecordedWhen,SOURCE.Temperature,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_ColdRoomTemperatures"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_ColdRoomTemperatures">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_ColdRoomTemperatures AS 
+Select * from Staging.ColdRoomTemperatures STAGE
+WHERE STAGE.ColdRoomTemperatureID NOT IN (Select ColdRoomTemperatureID from Temporal.ColdRoomTemperatures) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.ColdRoomTemperatures AS TARGET
+USING TMP_DELETE_ColdRoomTemperatures SOURCE
+	ON SOURCE.ColdRoomTemperatureID = TARGET.ColdRoomTemperatureID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_Colors">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/Colors</arg>
+            <arg>--query</arg>
+            <arg>SELECT [ColorID]       ,[ColorName]       ,[LastEditedBy]   FROM [Warehouse].[Colors] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.Colors</arg>
+        </sqoop>
+        <ok to="Merge_Colors"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_Colors">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.Colors STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.Colors where 1=0;
+ALTER TABLE Staging.Colors CLUSTERED BY(ColorID) INTO 5 BUCKETS;
+ALTER TABLE Staging.Colors SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.Colors AS TARGET
+USING (
+SELECT ColorID as join_key, TEMP.* from Temporal.Colors TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.Colors AS TEMP JOIN Staging.Colors STAGE ON TEMP.ColorID = STAGE.ColorID 
+	   WHERE (TEMP.ColorName != STAGE.ColorName OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.ColorID
+
+WHEN MATCHED AND (
+	TARGET.ColorName != SOURCE.ColorName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 ColorName = SOURCE.ColorName 
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.ColorID,SOURCE.ColorName,SOURCE.LastEditedBy, 'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_Colors"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_Colors">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_Colors AS 
+Select * from Staging.Colors STAGE
+WHERE STAGE.ColorID NOT IN (Select ColorID from Temporal.Colors) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.Colors AS TARGET
+USING TMP_DELETE_Colors SOURCE
+	ON SOURCE.ColorID = TARGET.ColorID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_PackageTypes">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/PackageTypes</arg>
+            <arg>--query</arg>
+            <arg>SELECT [PackageTypeID]       ,[PackageTypeName]       ,[LastEditedBy]   FROM [Warehouse].[PackageTypes] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.PackageTypes</arg>
+        </sqoop>
+        <ok to="Merge_PackageTypes"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_PackageTypes">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.PackageTypes STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.PackageTypes where 1=0;
+ALTER TABLE Staging.PackageTypes CLUSTERED BY(PackageTypeID) INTO 5 BUCKETS;
+ALTER TABLE Staging.PackageTypes SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.PackageTypes AS TARGET
+USING (
+SELECT PackageTypeID as join_key, TEMP.* from Temporal.PackageTypes TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.PackageTypes AS TEMP JOIN Staging.PackageTypes STAGE ON TEMP.PackageTypeID = STAGE.PackageTypeID 
+	   WHERE (TEMP.PackageTypeName != STAGE.PackageTypeName OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.PackageTypeID
+
+WHEN MATCHED AND (
+	TARGET.PackageTypeName != SOURCE.PackageTypeName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 PackageTypeName = SOURCE.PackageTypeName 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.PackageTypeID,SOURCE.PackageTypeName,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_PackageTypes"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_PackageTypes">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_PackageTypes AS 
+Select * from Staging.PackageTypes STAGE
+WHERE STAGE.PackageTypeID NOT IN (Select PackageTypeID from Temporal.PackageTypes) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.PackageTypes AS TARGET
+USING TMP_DELETE_PackageTypes SOURCE
+	ON SOURCE.PackageTypeID = TARGET.PackageTypeID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StockGroups">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StockGroups</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StockGroupID]       ,[StockGroupName]       ,[LastEditedBy]   FROM [Warehouse].[StockGroups]  WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StockGroups</arg>
+        </sqoop>
+        <ok to="Merge_StockGroups"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StockGroups">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StockGroups STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StockGroups where 1=0;
+ALTER TABLE Staging.StockGroups CLUSTERED BY(StockGroupID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StockGroups SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StockGroups AS TARGET
+USING (
+SELECT StockGroupID as join_key, TEMP.* from Temporal.StockGroups TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StockGroups AS TEMP JOIN Staging.StockGroups STAGE ON TEMP.StockGroupID = STAGE.StockGroupID 
+	   WHERE (TEMP.StockGroupName != STAGE.StockGroupName OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StockGroupID
+
+WHEN MATCHED AND (
+	TARGET.StockGroupName != SOURCE.StockGroupName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 StockGroupName = SOURCE.StockGroupName
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StockGroupID,SOURCE.StockGroupName,SOURCE.LastEditedBy, 'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StockGroups"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StockGroups">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StockGroups AS 
+Select * from Staging.StockGroups STAGE
+WHERE STAGE.StockGroupID NOT IN (Select StockGroupID from Temporal.StockGroups) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StockGroups AS TARGET
+USING TMP_DELETE_StockGroups SOURCE
+	ON SOURCE.StockGroupID = TARGET.StockGroupID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StockItemHoldings">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StockItemHoldings</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StockItemID]       ,[QuantityOnHand]       ,[BinLocation]       ,[LastStocktakeQuantity]       ,[LastCostPrice]       ,[ReorderLevel]       ,[TargetStockLevel]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Warehouse].[StockItemHoldings]  WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StockItemHoldings</arg>
+        </sqoop>
+        <ok to="Merge_StockItemHoldings"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StockItemHoldings">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StockItemHoldings STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StockItemHoldings where 1=0;
+ALTER TABLE Staging.StockItemHoldings CLUSTERED BY(StockItemID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StockItemHoldings SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StockItemHoldings AS TARGET
+USING (
+SELECT StockItemID as join_key, TEMP.* from Temporal.StockItemHoldings TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StockItemHoldings AS TEMP JOIN Staging.StockItemHoldings STAGE ON TEMP.StockItemID = STAGE.StockItemID 
+	   WHERE (TEMP.QuantityOnHand != STAGE.QuantityOnHand OR
+			  TEMP.BinLocation != STAGE.BinLocation OR
+			  TEMP.LastStocktakeQuantity != STAGE.LastStocktakeQuantity OR
+			  TEMP.LastCostPrice != STAGE.LastCostPrice OR
+			  TEMP.ReorderLevel != STAGE.ReorderLevel OR
+			  TEMP.TargetStockLevel != STAGE.TargetStockLevel OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StockItemID
+
+WHEN MATCHED AND (
+	TARGET.QuantityOnHand != SOURCE.QuantityOnHand OR
+	TARGET.BinLocation != SOURCE.BinLocation OR
+	TARGET.LastStocktakeQuantity != SOURCE.LastStocktakeQuantity OR
+	TARGET.LastCostPrice != SOURCE.LastCostPrice OR
+	TARGET.ReorderLevel != SOURCE.ReorderLevel OR
+	TARGET.TargetStockLevel != SOURCE.TargetStockLevel OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		 QuantityOnHand = SOURCE.QuantityOnHand 
+		,BinLocation = SOURCE.BinLocation 
+		,LastStocktakeQuantity = SOURCE.LastStocktakeQuantity 
+		,LastCostPrice = SOURCE.LastCostPrice 
+		,ReorderLevel = SOURCE.ReorderLevel 
+		,TargetStockLevel = SOURCE.TargetStockLevel 
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,LastEditedWhen = SOURCE.LastEditedWhen 
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StockItemID,SOURCE.QuantityOnHand,SOURCE.BinLocation,SOURCE.LastStocktakeQuantity,SOURCE.LastCostPrice,SOURCE.ReorderLevel,SOURCE.TargetStockLevel,SOURCE.LastEditedBy,SOURCE.LastEditedWhen, 'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StockItemHoldings"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StockItemHoldings">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StockItemHoldings AS 
+Select * from Staging.StockItemHoldings STAGE
+WHERE STAGE.StockItemID NOT IN (Select StockItemID from Temporal.StockItemHoldings) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StockItemHoldings AS TARGET
+USING TMP_DELETE_StockItemHoldings SOURCE
+	ON SOURCE.StockItemID = TARGET.StockItemID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StockItems">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StockItems</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StockItemID]       ,[StockItemName]       ,[SupplierID]       ,[ColorID]       ,[UnitPackageID]       ,[OuterPackageID]       ,[Brand]       ,[Size]       ,[LeadTimeDays]       ,[QuantityPerOuter]       ,[IsChillerStock]       ,[Barcode]       ,[TaxRate]       ,[UnitPrice]       ,[RecommendedRetailPrice]       ,[TypicalWeightPerUnit]       ,[MarketingComments]       ,[InternalComments]       ,CAST([Photo] as nvarchar(max)) as Photo       ,[CustomFields]       ,[Tags]       ,[SearchDetails]       ,[LastEditedBy]   FROM [Warehouse].[StockItems] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StockItems</arg>
+        </sqoop>
+        <ok to="Merge_StockItems"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StockItems">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StockItems STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StockItems where 1=0;
+ALTER TABLE Staging.StockItems CLUSTERED BY(StockItemID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StockItems SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StockItems AS TARGET
+USING (
+SELECT StockItemID as join_key, TEMP.* from Temporal.StockItems TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StockItems AS TEMP JOIN Staging.StockItems STAGE ON TEMP.StockItemID = STAGE.StockItemID 
+	   WHERE (TEMP.StockItemName != STAGE.StockItemName OR
+			  TEMP.SupplierID != STAGE.SupplierID OR
+			  TEMP.ColorID != STAGE.ColorID OR
+			  TEMP.UnitPackageID != STAGE.UnitPackageID OR
+			  TEMP.OuterPackageID != STAGE.OuterPackageID OR
+			  TEMP.Brand != STAGE.Brand OR
+			  TEMP.Size != STAGE.Size OR
+			  TEMP.LeadTimeDays != STAGE.LeadTimeDays OR
+			  TEMP.QuantityPerOuter != STAGE.QuantityPerOuter OR
+			  TEMP.IsChillerStock != STAGE.IsChillerStock OR
+			  TEMP.Barcode != STAGE.Barcode OR
+			  TEMP.TaxRate != STAGE.TaxRate OR
+			  TEMP.UnitPrice != STAGE.UnitPrice OR
+			  TEMP.RecommendedRetailPrice != STAGE.RecommendedRetailPrice OR
+			  TEMP.TypicalWeightPerUnit != STAGE.TypicalWeightPerUnit OR
+			  TEMP.MarketingComments != STAGE.MarketingComments OR
+			  TEMP.InternalComments != STAGE.InternalComments OR
+			  TEMP.Photo != STAGE.Photo OR
+			  TEMP.CustomFields != STAGE.CustomFields OR
+			  TEMP.Tags != STAGE.Tags OR
+			  TEMP.SearchDetails != STAGE.SearchDetails OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StockItemID
+	
+WHEN MATCHED AND (
+	TARGET.StockItemName != SOURCE.StockItemName OR
+	TARGET.SupplierID != SOURCE.SupplierID OR
+	TARGET.ColorID != SOURCE.ColorID OR
+	TARGET.UnitPackageID != SOURCE.UnitPackageID OR
+	TARGET.OuterPackageID != SOURCE.OuterPackageID OR
+	TARGET.Brand != SOURCE.Brand OR
+	TARGET.Size != SOURCE.Size OR
+	TARGET.LeadTimeDays != SOURCE.LeadTimeDays OR
+	TARGET.QuantityPerOuter != SOURCE.QuantityPerOuter OR
+	TARGET.IsChillerStock != SOURCE.IsChillerStock OR
+	TARGET.Barcode != SOURCE.Barcode OR
+	TARGET.TaxRate != SOURCE.TaxRate OR
+	TARGET.UnitPrice != SOURCE.UnitPrice OR
+	TARGET.RecommendedRetailPrice != SOURCE.RecommendedRetailPrice OR
+	TARGET.TypicalWeightPerUnit != SOURCE.TypicalWeightPerUnit OR
+	TARGET.MarketingComments != SOURCE.MarketingComments OR
+	TARGET.InternalComments != SOURCE.InternalComments OR
+	TARGET.Photo != SOURCE.Photo OR
+	TARGET.CustomFields != SOURCE.CustomFields OR
+	TARGET.Tags != SOURCE.Tags OR
+	TARGET.SearchDetails != SOURCE.SearchDetails OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 StockItemName = SOURCE.StockItemName 
+		,SupplierID = SOURCE.SupplierID 
+		,ColorID = SOURCE.ColorID 
+		,UnitPackageID = SOURCE.UnitPackageID 
+		,OuterPackageID = SOURCE.OuterPackageID 
+		,Brand = SOURCE.Brand 
+		,Size = SOURCE.Size 
+		,LeadTimeDays = SOURCE.LeadTimeDays 
+		,QuantityPerOuter = SOURCE.QuantityPerOuter 
+		,IsChillerStock = SOURCE.IsChillerStock 
+		,Barcode = SOURCE.Barcode 	
+		,TaxRate = SOURCE.TaxRate 
+		,UnitPrice = SOURCE.UnitPrice 
+		,RecommendedRetailPrice = SOURCE.RecommendedRetailPrice  
+		,TypicalWeightPerUnit = SOURCE.TypicalWeightPerUnit  
+		,MarketingComments = SOURCE.MarketingComments  
+		,InternalComments = SOURCE.InternalComments  
+		,Photo = SOURCE.Photo  
+		,CustomFields = SOURCE.CustomFields  
+		,Tags = SOURCE.Tags  
+		,SearchDetails = SOURCE.SearchDetails  
+		,LastEditedBy = SOURCE.LastEditedBy  
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StockItemID,SOURCE.StockItemName,SOURCE.SupplierID,SOURCE.ColorID,SOURCE.UnitPackageID,SOURCE.OuterPackageID,SOURCE.Brand,SOURCE.Size,SOURCE.LeadTimeDays
+		      ,SOURCE.QuantityPerOuter,SOURCE.IsChillerStock,SOURCE.Barcode,SOURCE.TaxRate,SOURCE.UnitPrice,SOURCE.RecommendedRetailPrice,SOURCE.TypicalWeightPerUnit ,SOURCE.MarketingComments ,SOURCE.InternalComments ,SOURCE.Photo,SOURCE.CustomFields  
+		,SOURCE.Tags ,SOURCE.SearchDetails,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StockItems"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StockItems">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StockItems AS 
+Select * from Staging.StockItems STAGE
+WHERE STAGE.StockItemID NOT IN (Select StockItemID from Temporal.StockItems) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StockItems AS TARGET
+USING TMP_DELETE_StockItems SOURCE
+	ON SOURCE.StockItemID = TARGET.StockItemID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StockItemStockGroups">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StockItemStockGroups</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StockItemStockGroupID]       ,[StockItemID]       ,[StockGroupID]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Warehouse].[StockItemStockGroups] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StockItemStockGroups</arg>
+        </sqoop>
+        <ok to="Merge_StockItemStockGroups"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StockItemStockGroups">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StockItemStockGroups STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StockItemStockGroups where 1=0;
+ALTER TABLE Staging.StockItemStockGroups CLUSTERED BY(StockItemStockGroupID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StockItemStockGroups SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StockItemStockGroups AS TARGET
+USING (
+SELECT StockItemStockGroupID as join_key, TEMP.* from Temporal.StockItemStockGroups TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StockItemStockGroups AS TEMP JOIN Staging.StockItemStockGroups STAGE ON TEMP.StockItemStockGroupID = STAGE.StockItemStockGroupID 
+	   WHERE (TEMP.StockItemID != STAGE.StockItemID OR
+			  TEMP.StockGroupID != STAGE.StockGroupID OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StockItemStockGroupID
+
+WHEN MATCHED AND (
+	TARGET.StockItemID != SOURCE.StockItemID OR
+	TARGET.StockGroupID != SOURCE.StockGroupID OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 StockItemID = SOURCE.StockItemID
+		,StockGroupID = SOURCE.StockGroupID
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,ct_operation = 'U'
+
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StockItemStockGroupID,SOURCE.StockItemID,SOURCE.StockGroupID,SOURCE.LastEditedBy,SOURCE.LastEditedBy, 'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StockItemStockGroups"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StockItemStockGroups">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StockItemStockGroups AS 
+Select * from Staging.StockItemStockGroups STAGE
+WHERE STAGE.StockItemStockGroupID NOT IN (Select StockItemStockGroupID from Temporal.StockItemStockGroups) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StockItemStockGroups AS TARGET
+USING TMP_DELETE_StockItemStockGroups SOURCE
+	ON SOURCE.StockItemStockGroupID = TARGET.StockItemStockGroupID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_StockItemTransactions">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/StockItemTransactions</arg>
+            <arg>--query</arg>
+            <arg>SELECT [StockItemTransactionID]       ,[StockItemID]       ,[TransactionTypeID]       ,[CustomerID]       ,[InvoiceID]       ,[SupplierID]       ,[PurchaseOrderID]       ,[TransactionOccurredWhen]       ,[Quantity]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Warehouse].[StockItemTransactions] WHERE $CONDITIONS</arg>
+            <arg>--split-by</arg>
+            <arg>StockItemTransactionID</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.StockItemTransactions</arg>
+        </sqoop>
+        <ok to="Merge_StockItemTransactions"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_StockItemTransactions">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.StockItemTransactions STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.StockItemTransactions where 1=0;
+ALTER TABLE Staging.StockItemTransactions CLUSTERED BY(StockItemTransactionID) INTO 5 BUCKETS;
+ALTER TABLE Staging.StockItemTransactions SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.StockItemTransactions AS TARGET
+USING (
+SELECT StockItemTransactionID as join_key, TEMP.* from Temporal.StockItemTransactions TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.StockItemTransactions AS TEMP JOIN Staging.StockItemTransactions STAGE ON TEMP.StockItemTransactionID = STAGE.StockItemTransactionID 
+	   WHERE (TEMP.StockItemID != STAGE.StockItemID OR
+			  TEMP.TransactionTypeID != STAGE.TransactionTypeID OR
+			  TEMP.CustomerID != STAGE.CustomerID OR
+			  TEMP.InvoiceID != STAGE.InvoiceID OR
+			  TEMP.SupplierID != STAGE.SupplierID OR
+			  TEMP.PurchaseOrderID != STAGE.PurchaseOrderID OR
+			  TEMP.TransactionOccurredWhen != STAGE.TransactionOccurredWhen OR
+			  TEMP.Quantity != STAGE.Quantity OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.StockItemTransactionID
+	
+WHEN MATCHED AND (
+	TARGET.StockItemID != SOURCE.StockItemID OR
+	TARGET.TransactionTypeID != SOURCE.TransactionTypeID OR
+	TARGET.CustomerID != SOURCE.CustomerID OR
+	TARGET.InvoiceID != SOURCE.InvoiceID OR
+	TARGET.SupplierID != SOURCE.SupplierID OR
+	TARGET.PurchaseOrderID != SOURCE.PurchaseOrderID OR
+	TARGET.TransactionOccurredWhen != SOURCE.TransactionOccurredWhen OR
+	TARGET.Quantity != SOURCE.Quantity OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		StockItemID = SOURCE.StockItemID 
+		,TransactionTypeID = SOURCE.TransactionTypeID 
+		,CustomerID = SOURCE.CustomerID 
+		,InvoiceID = SOURCE.InvoiceID 
+		,SupplierID = SOURCE.SupplierID 
+		,PurchaseOrderID = SOURCE.PurchaseOrderID 
+		,TransactionOccurredWhen = SOURCE.TransactionOccurredWhen 
+		,Quantity = SOURCE.Quantity 
+		,LastEditedBy = SOURCE.LastEditedBy 
+		,LastEditedWhen = SOURCE.LastEditedWhen 
+		,ct_operation = 'U'
+		,ct_modifydate = from_unixtime(unix_timestamp())
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.StockItemTransactionID,SOURCE.StockItemID,SOURCE.TransactionTypeID,SOURCE.CustomerID,SOURCE.InvoiceID,SOURCE.SupplierID,SOURCE.PurchaseOrderID,SOURCE.TransactionOccurredWhen,SOURCE.Quantity,SOURCE.LastEditedBy,SOURCE.LastEditedWhen,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_StockItemStockGroups-copy"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_StockItemStockGroups-copy">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_StockItemTransactions AS 
+Select * from Staging.StockItemTransactions STAGE
+WHERE STAGE.StockItemTransactionID NOT IN (Select StockItemTransactionID from Temporal.StockItemTransactions) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.StockItemTransactions AS TARGET
+USING TMP_DELETE_StockItemTransactions SOURCE
+	ON SOURCE.StockItemTransactionID = TARGET.StockItemTransactionID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_VehicleTemperatures">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/VehicleTemperatures</arg>
+            <arg>--query</arg>
+            <arg>SELECT [VehicleTemperatureID]       ,[VehicleRegistration]       ,[ChillerSensorNumber]       ,[RecordedWhen]       ,[Temperature]       ,[IsCompressed]       ,[FullSensorData]       ,CAST([CompressedSensorData] as nvarchar(max)) as CompressedSensorData   FROM [Warehouse].[VehicleTemperatures] WHERE $CONDITIONS</arg>
+            <arg>--split-by</arg>
+            <arg>VehicleTemperatureID</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.VehicleTemperatures</arg>
+        </sqoop>
+        <ok to="Merge_VehicleTemperatures"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_VehicleTemperatures">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.VehicleTemperatures STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.VehicleTemperatures where 1=0;
+ALTER TABLE Staging.VehicleTemperatures CLUSTERED BY(VehicleTemperatureID) INTO 5 BUCKETS;
+ALTER TABLE Staging.VehicleTemperatures SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.VehicleTemperatures AS TARGET
+USING (
+SELECT VehicleTemperatureID as join_key, TEMP.* from Temporal.VehicleTemperatures TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.VehicleTemperatures AS TEMP JOIN Staging.VehicleTemperatures STAGE ON TEMP.VehicleTemperatureID = STAGE.VehicleTemperatureID 
+	   WHERE (TEMP.VehicleRegistration != STAGE.VehicleRegistration OR
+	          TEMP.ChillerSensorNumber != STAGE.ChillerSensorNumber OR
+	          TEMP.RecordedWhen != STAGE.RecordedWhen OR
+	          TEMP.Temperature != STAGE.Temperature OR
+	          TEMP.IsCompressed != STAGE.IsCompressed OR
+	          TEMP.FullSensorData != STAGE.FullSensorData OR
+	          TEMP.CompressedSensorData != STAGE.CompressedSensorData) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.VehicleTemperatureID
+	
+WHEN MATCHED AND (
+	TARGET.VehicleRegistration != SOURCE.VehicleRegistration OR
+	TARGET.ChillerSensorNumber != SOURCE.ChillerSensorNumber OR
+	TARGET.RecordedWhen != SOURCE.RecordedWhen OR
+	TARGET.Temperature != SOURCE.Temperature OR
+	TARGET.IsCompressed != SOURCE.IsCompressed OR
+	TARGET.FullSensorData != SOURCE.FullSensorData OR
+	TARGET.CompressedSensorData != SOURCE.CompressedSensorData)	THEN UPDATE SET
+		VehicleRegistration = SOURCE.VehicleRegistration 
+		,ChillerSensorNumber = SOURCE.ChillerSensorNumber 
+		,RecordedWhen = SOURCE.RecordedWhen 
+		,Temperature = SOURCE.Temperature 
+		,IsCompressed = SOURCE.IsCompressed 
+		,FullSensorData = SOURCE.FullSensorData 
+		,CompressedSensorData = SOURCE.CompressedSensorData 
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.VehicleTemperatureID,SOURCE.VehicleRegistration,SOURCE.ChillerSensorNumber,SOURCE.RecordedWhen,SOURCE.Temperature,SOURCE.IsCompressed,SOURCE.FullSensorData,SOURCE.CompressedSensorData,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_VehicleTemperatures"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_VehicleTemperatures">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_VehicleTemperatures AS 
+Select * from Staging.VehicleTemperatures STAGE
+WHERE STAGE.VehicleTemperatureID NOT IN (Select VehicleTemperatureID from Temporal.VehicleTemperatures) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.VehicleTemperatures AS TARGET
+USING TMP_DELETE_VehicleTemperatures SOURCE
+	ON SOURCE.VehicleTemperatureID = TARGET.VehicleTemperatureID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Warehouse_end"/>
+        <error to="kill"/>
+    </action>
+    <kill name="kill">
+        <message>${wf:errorMessage(wf:lastErrorNode())}</message>
+    </kill>
+    <end name="end"/>
+</workflow-app>

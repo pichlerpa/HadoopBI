@@ -1,0 +1,597 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="Purchasing">
+    <start to="Purchasing_start"/>
+    <fork name="Purchasing_start">
+        <path start="Import_PurchaseOrderLines"/>
+        <path start="Import_PurchaseOrders"/>
+        <path start="Import_SupplierTransactions"/>
+        <path start="Import_Suppliers"/>
+        <path start="Import_SupplierCategories"/>
+    </fork>
+    <join name="Purchasing_end" to="end"/>
+    <action name="Import_PurchaseOrderLines">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/PurchaseOrderLines</arg>
+            <arg>--query</arg>
+            <arg>SELECT [PurchaseOrderLineID]       ,[PurchaseOrderID]       ,[StockItemID]       ,[OrderedOuters]       ,[Description]       ,[ReceivedOuters]       ,[PackageTypeID]       ,[ExpectedUnitPricePerOuter]       ,[LastReceiptDate]       ,[IsOrderLineFinalized]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Purchasing].[PurchaseOrderLines] WHERE $CONDITIONS</arg>
+            <arg>--split-by</arg>
+            <arg>PurchaseOrderLineID</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.PurchaseOrderLines</arg>
+        </sqoop>
+        <ok to="Merge_PurchaseOrderLines"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_PurchaseOrderLines">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.PurchaseOrderLines STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.PurchaseOrderLines where 1=0;
+ALTER TABLE Staging.PurchaseOrderLines CLUSTERED BY(PurchaseOrderLineID) INTO 5 BUCKETS;
+ALTER TABLE Staging.PurchaseOrderLines SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.PurchaseOrderLines AS TARGET
+USING (
+SELECT PurchaseOrderLineID as join_key, TEMP.* from Temporal.PurchaseOrderLines TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.PurchaseOrderLines AS TEMP JOIN Staging.PurchaseOrderLines STAGE ON TEMP.PurchaseOrderLineID = STAGE.PurchaseOrderLineID 
+	   WHERE (TEMP.PurchaseOrderID != STAGE.PurchaseOrderID OR
+			  TEMP.StockItemID != STAGE.StockItemID OR
+			  TEMP.OrderedOuters != STAGE.OrderedOuters OR
+			  TEMP.Description != STAGE.Description OR
+			  TEMP.ReceivedOuters != STAGE.ReceivedOuters OR
+			  TEMP.PackageTypeID != STAGE.PackageTypeID OR
+			  TEMP.ExpectedUnitPricePerOuter != STAGE.ExpectedUnitPricePerOuter OR
+			  TEMP.LastReceiptDate != STAGE.LastReceiptDate OR
+			  TEMP.IsOrderLineFinalized != STAGE.IsOrderLineFinalized OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.PurchaseOrderLineID
+	
+WHEN MATCHED AND (
+	TARGET.PurchaseOrderID != SOURCE.PurchaseOrderID OR
+	TARGET.StockItemID != SOURCE.StockItemID OR
+	TARGET.OrderedOuters != SOURCE.OrderedOuters OR
+	TARGET.Description != SOURCE.Description OR
+	TARGET.ReceivedOuters != SOURCE.ReceivedOuters OR
+	TARGET.PackageTypeID != SOURCE.PackageTypeID OR
+	TARGET.ExpectedUnitPricePerOuter != SOURCE.ExpectedUnitPricePerOuter OR
+	TARGET.LastReceiptDate != SOURCE.LastReceiptDate OR
+	TARGET.IsOrderLineFinalized != SOURCE.IsOrderLineFinalized OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		 PurchaseOrderID = SOURCE.PurchaseOrderID 
+		,StockItemID = SOURCE.StockItemID 
+		,OrderedOuters = SOURCE.OrderedOuters 
+		,Description = SOURCE.Description 
+		,ReceivedOuters = SOURCE.ReceivedOuters 
+		,PackageTypeID = SOURCE.PackageTypeID 
+		,ExpectedUnitPricePerOuter = SOURCE.ExpectedUnitPricePerOuter 
+		,LastReceiptDate = SOURCE.LastReceiptDate 
+		,IsOrderLineFinalized = SOURCE.IsOrderLineFinalized 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,LastEditedWhen = SOURCE.LastEditedWhen
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.PurchaseOrderLineID,SOURCE.PurchaseOrderID,SOURCE.StockItemID,SOURCE.OrderedOuters,SOURCE.Description,SOURCE.ReceivedOuters,SOURCE.PackageTypeID,SOURCE.ExpectedUnitPricePerOuter,SOURCE.LastReceiptDate,SOURCE.IsOrderLineFinalized
+		      ,SOURCE.LastEditedBy,SOURCE.LastEditedWhen,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_PurchaseOrderLines"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_PurchaseOrderLines">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_PurchaseOrderLines AS 
+Select * from Staging.PurchaseOrderLines STAGE
+WHERE STAGE.PurchaseOrderLineID NOT IN (Select PurchaseOrderLineID from Temporal.PurchaseOrderLines) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.PurchaseOrderLines AS TARGET
+USING TMP_DELETE_PurchaseOrderLines SOURCE
+	ON SOURCE.PurchaseOrderLineID = TARGET.PurchaseOrderLineID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Purchasing_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_PurchaseOrders">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/PurchaseOrders</arg>
+            <arg>--query</arg>
+            <arg>SELECT [PurchaseOrderID]       ,[SupplierID]       ,[OrderDate]       ,[DeliveryMethodID]       ,[ContactPersonID]       ,[ExpectedDeliveryDate]       ,[SupplierReference]       ,[IsOrderFinalized]       ,[Comments]       ,[InternalComments]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Purchasing].[PurchaseOrders] WHERE $CONDITIONS</arg>
+            <arg>--split-by</arg>
+            <arg>PurchaseOrderID</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.PurchaseOrders</arg>
+        </sqoop>
+        <ok to="Merge_PurchaseOrders"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_PurchaseOrders">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.PurchaseOrders STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.PurchaseOrders where 1=0;
+ALTER TABLE Staging.PurchaseOrders CLUSTERED BY(PurchaseOrderID) INTO 5 BUCKETS;
+ALTER TABLE Staging.PurchaseOrders SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.PurchaseOrders AS TARGET
+USING (
+SELECT PurchaseOrderID as join_key, TEMP.* from Temporal.PurchaseOrders TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.PurchaseOrders AS TEMP JOIN Staging.PurchaseOrders STAGE ON TEMP.PurchaseOrderID = STAGE.PurchaseOrderID 
+	   WHERE (TEMP.SupplierID != STAGE.SupplierID OR
+			  TEMP.OrderDate != STAGE.OrderDate OR
+			  TEMP.DeliveryMethodID != STAGE.DeliveryMethodID OR
+			  TEMP.ContactPersonID != STAGE.ContactPersonID OR
+			  TEMP.ExpectedDeliveryDate != STAGE.ExpectedDeliveryDate OR
+			  TEMP.SupplierReference != STAGE.SupplierReference OR
+			  TEMP.IsOrderFinalized != STAGE.IsOrderFinalized OR
+			  TEMP.Comments != STAGE.Comments OR
+			  TEMP.InternalComments != STAGE.InternalComments OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.PurchaseOrderID
+	
+WHEN MATCHED AND (
+	TARGET.SupplierID != SOURCE.SupplierID OR
+	TARGET.OrderDate != SOURCE.OrderDate OR
+	TARGET.DeliveryMethodID != SOURCE.DeliveryMethodID OR
+	TARGET.ContactPersonID != SOURCE.ContactPersonID OR
+	TARGET.ExpectedDeliveryDate != SOURCE.ExpectedDeliveryDate OR
+	TARGET.SupplierReference != SOURCE.SupplierReference OR
+	TARGET.IsOrderFinalized != SOURCE.IsOrderFinalized OR
+	TARGET.Comments != SOURCE.Comments OR
+	TARGET.InternalComments != SOURCE.InternalComments OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		 SupplierID = SOURCE.SupplierID 
+		,OrderDate = SOURCE.OrderDate 
+		,DeliveryMethodID = SOURCE.DeliveryMethodID 
+		,ContactPersonID = SOURCE.ContactPersonID 
+		,ExpectedDeliveryDate = SOURCE.ExpectedDeliveryDate 
+		,SupplierReference = SOURCE.SupplierReference 
+		,IsOrderFinalized = SOURCE.IsOrderFinalized 
+		,Comments = SOURCE.Comments 
+		,InternalComments = SOURCE.InternalComments 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,LastEditedWhen = SOURCE.LastEditedWhen
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.PurchaseOrderID,SOURCE.SupplierID,SOURCE.OrderDate,SOURCE.DeliveryMethodID,SOURCE.ContactPersonID,SOURCE.ExpectedDeliveryDate,SOURCE.SupplierReference,SOURCE.IsOrderFinalized,SOURCE.Comments,SOURCE.InternalComments
+		      ,SOURCE.LastEditedBy,SOURCE.LastEditedWhen,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_PurchaseOrders"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_PurchaseOrders">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_PurchaseOrders AS 
+Select * from Staging.PurchaseOrders STAGE
+WHERE STAGE.PurchaseOrderID NOT IN (Select PurchaseOrderID from Temporal.PurchaseOrders) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.PurchaseOrders AS TARGET
+USING TMP_DELETE_PurchaseOrders SOURCE
+	ON SOURCE.PurchaseOrderID = TARGET.PurchaseOrderID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Purchasing_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_SupplierTransactions">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/SupplierTransactions</arg>
+            <arg>--query</arg>
+            <arg>SELECT [SupplierTransactionID]       ,[SupplierID]       ,[TransactionTypeID]       ,[PurchaseOrderID]       ,[PaymentMethodID]       ,[SupplierInvoiceNumber]       ,[TransactionDate]       ,[AmountExcludingTax]       ,[TaxAmount]       ,[TransactionAmount]       ,[OutstandingBalance]       ,[FinalizationDate]       ,[IsFinalized]       ,[LastEditedBy]       ,[LastEditedWhen]   FROM [Purchasing].[SupplierTransactions] WHERE $CONDITIONS</arg>
+            <arg>--split-by</arg>
+            <arg>SupplierTransactionID</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.SupplierTransactions</arg>
+        </sqoop>
+        <ok to="Merge_SupplierTransactions"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_SupplierTransactions">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.SupplierTransactions STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.SupplierTransactions where 1=0;
+ALTER TABLE Staging.SupplierTransactions CLUSTERED BY(SupplierTransactionID) INTO 5 BUCKETS;
+ALTER TABLE Staging.SupplierTransactions SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.SupplierTransactions AS TARGET
+USING (
+SELECT SupplierTransactionID as join_key, TEMP.* from Temporal.SupplierTransactions TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.SupplierTransactions AS TEMP JOIN Staging.SupplierTransactions STAGE ON TEMP.SupplierTransactionID = STAGE.SupplierTransactionID 
+	   WHERE (TEMP.SupplierID != STAGE.SupplierID OR
+			  TEMP.TransactionTypeID != STAGE.TransactionTypeID OR
+			  TEMP.PurchaseOrderID != STAGE.PurchaseOrderID OR
+			  TEMP.PaymentMethodID != STAGE.PaymentMethodID OR
+			  TEMP.SupplierInvoiceNumber != STAGE.SupplierInvoiceNumber OR
+			  TEMP.TransactionDate != STAGE.TransactionDate OR
+			  TEMP.AmountExcludingTax != STAGE.AmountExcludingTax OR
+			  TEMP.TaxAmount != STAGE.TaxAmount OR
+			  TEMP.TransactionAmount != STAGE.TransactionAmount OR
+			  TEMP.OutstandingBalance != STAGE.OutstandingBalance OR
+			  TEMP.FinalizationDate != STAGE.FinalizationDate OR
+			  TEMP.IsFinalized != STAGE.IsFinalized OR
+			  TEMP.LastEditedBy != STAGE.LastEditedBy OR
+			  TEMP.LastEditedWhen != STAGE.LastEditedWhen) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.SupplierTransactionID
+	
+WHEN MATCHED AND (
+	TARGET.SupplierID != SOURCE.SupplierID OR
+	TARGET.TransactionTypeID != SOURCE.TransactionTypeID OR
+	TARGET.PurchaseOrderID != SOURCE.PurchaseOrderID OR
+	TARGET.PaymentMethodID != SOURCE.PaymentMethodID OR
+	TARGET.SupplierInvoiceNumber != SOURCE.SupplierInvoiceNumber OR
+	TARGET.TransactionDate != SOURCE.TransactionDate OR
+	TARGET.AmountExcludingTax != SOURCE.AmountExcludingTax OR
+	TARGET.TaxAmount != SOURCE.TaxAmount OR
+	TARGET.TransactionAmount != SOURCE.TransactionAmount OR
+	TARGET.OutstandingBalance != SOURCE.OutstandingBalance OR
+	TARGET.FinalizationDate != SOURCE.FinalizationDate OR
+	TARGET.IsFinalized != SOURCE.IsFinalized OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy OR
+	TARGET.LastEditedWhen != SOURCE.LastEditedWhen)	THEN UPDATE SET
+		 SupplierID = SOURCE.SupplierID 
+		,TransactionTypeID = SOURCE.TransactionTypeID 
+		,PurchaseOrderID = SOURCE.PurchaseOrderID 
+		,PaymentMethodID = SOURCE.PaymentMethodID 
+		,SupplierInvoiceNumber = SOURCE.SupplierInvoiceNumber 
+		,TransactionDate = SOURCE.TransactionDate 
+		,AmountExcludingTax = SOURCE.AmountExcludingTax 
+		,TaxAmount = SOURCE.TaxAmount 
+		,TransactionAmount = SOURCE.TransactionAmount 
+		,OutstandingBalance = SOURCE.OutstandingBalance		
+		,FinalizationDate = SOURCE.FinalizationDate
+		,IsFinalized = SOURCE.IsFinalized
+		,LastEditedBy = SOURCE.LastEditedBy
+		,LastEditedWhen = SOURCE.LastEditedWhen
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.SupplierTransactionID,SOURCE.SupplierID,SOURCE.TransactionTypeID,SOURCE.PurchaseOrderID,SOURCE.PaymentMethodID,SOURCE.SupplierInvoiceNumber,SOURCE.TransactionDate,SOURCE.AmountExcludingTax,SOURCE.TaxAmount,SOURCE.TransactionAmount
+		      ,SOURCE.OutstandingBalance,SOURCE.FinalizationDate,SOURCE.IsFinalized,SOURCE.LastEditedBy,SOURCE.LastEditedWhen,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_SupplierTransactions"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_SupplierTransactions">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_SupplierTransactions AS 
+Select * from Staging.SupplierTransactions STAGE
+WHERE STAGE.SupplierTransactionID NOT IN (Select SupplierTransactionID from Temporal.SupplierTransactions) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.SupplierTransactions AS TARGET
+USING TMP_DELETE_SupplierTransactions SOURCE
+	ON SOURCE.SupplierTransactionID = TARGET.SupplierTransactionID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Purchasing_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_Suppliers">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/Suppliers</arg>
+            <arg>--query</arg>
+            <arg>SELECT [SupplierID]       ,[SupplierName]       ,[SupplierCategoryID]       ,[PrimaryContactPersonID]       ,[AlternateContactPersonID]       ,[DeliveryMethodID]       ,[DeliveryCityID]       ,[PostalCityID]       ,[SupplierReference]       ,[BankAccountName]       ,[BankAccountBranch]       ,[BankAccountCode]       ,[BankAccountNumber]       ,[BankInternationalCode]       ,[PaymentDays]       ,[InternalComments]       ,[PhoneNumber]       ,[FaxNumber]       ,[WebsiteURL]       ,[DeliveryAddressLine1]       ,[DeliveryAddressLine2]       ,[DeliveryPostalCode]       ,CAST([DeliveryLocation] as nvarchar(max)) as DeliveryLocation     ,[PostalAddressLine1]       ,[PostalAddressLine2]       ,[PostalPostalCode]       ,[LastEditedBy]   FROM [Purchasing].[Suppliers] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.Suppliers</arg>
+        </sqoop>
+        <ok to="Merge_Supplier"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_Supplier">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.Suppliers STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.Suppliers where 1=0;
+ALTER TABLE Staging.Suppliers CLUSTERED BY(SupplierID) INTO 5 BUCKETS;
+ALTER TABLE Staging.Suppliers SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.Suppliers AS TARGET
+USING (
+SELECT SupplierID as join_key, TEMP.* from Temporal.Suppliers TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.Suppliers AS TEMP JOIN Staging.Suppliers STAGE ON TEMP.SupplierID = STAGE.SupplierID 
+	   WHERE (TEMP.SupplierName != STAGE.SupplierName OR
+	          TEMP.SupplierCategoryID != STAGE.SupplierCategoryID OR
+	          TEMP.PrimaryContactPersonID != STAGE.PrimaryContactPersonID OR
+	          TEMP.AlternateContactPersonID != STAGE.AlternateContactPersonID OR
+	          TEMP.DeliveryMethodID != STAGE.DeliveryMethodID OR
+	          TEMP.DeliveryCityID != STAGE.DeliveryCityID OR
+	          TEMP.PostalCityID != STAGE.PostalCityID OR
+	          TEMP.SupplierReference != STAGE.SupplierReference OR
+	          TEMP.BankAccountName != STAGE.BankAccountName OR
+	          TEMP.BankAccountBranch != STAGE.BankAccountBranch OR
+	          TEMP.BankAccountCode != STAGE.BankAccountCode OR
+	          TEMP.BankAccountNumber != STAGE.BankAccountNumber OR
+	          TEMP.BankInternationalCode != STAGE.BankInternationalCode OR
+	          TEMP.PaymentDays != STAGE.PaymentDays OR
+	          TEMP.InternalComments != STAGE.InternalComments OR
+	          TEMP.PhoneNumber != STAGE.PhoneNumber OR
+	          TEMP.FaxNumber != STAGE.FaxNumber OR
+	          TEMP.WebsiteURL != STAGE.WebsiteURL OR
+	          TEMP.DeliveryAddressLine1 != STAGE.DeliveryAddressLine1 OR
+	          TEMP.DeliveryAddressLine2 != STAGE.DeliveryAddressLine2 OR
+	          TEMP.DeliveryPostalCode != STAGE.DeliveryPostalCode OR
+	          TEMP.DeliveryLocation != STAGE.DeliveryLocation OR
+	          TEMP.PostalAddressLine1 != STAGE.PostalAddressLine1 OR
+	          TEMP.PostalAddressLine2 != STAGE.PostalAddressLine2 OR
+	          TEMP.PostalPostalCode != STAGE.PostalPostalCode OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.SupplierID
+	
+WHEN MATCHED AND (
+	TARGET.SupplierName != SOURCE.SupplierName OR
+	TARGET.SupplierCategoryID != SOURCE.SupplierCategoryID OR
+	TARGET.PrimaryContactPersonID != SOURCE.PrimaryContactPersonID OR
+	TARGET.AlternateContactPersonID != SOURCE.AlternateContactPersonID OR
+	TARGET.DeliveryMethodID != SOURCE.DeliveryMethodID OR
+	TARGET.DeliveryCityID != SOURCE.DeliveryCityID OR
+	TARGET.PostalCityID != SOURCE.PostalCityID OR
+	TARGET.SupplierReference != SOURCE.SupplierReference OR
+	TARGET.BankAccountName != SOURCE.BankAccountName OR
+	TARGET.BankAccountBranch != SOURCE.BankAccountBranch OR
+	TARGET.BankAccountCode != SOURCE.BankAccountCode OR
+	TARGET.BankAccountNumber != SOURCE.BankAccountNumber OR
+	TARGET.BankInternationalCode != SOURCE.BankInternationalCode OR
+	TARGET.PaymentDays != SOURCE.PaymentDays OR
+	TARGET.InternalComments != SOURCE.InternalComments OR
+	TARGET.PhoneNumber != SOURCE.PhoneNumber OR
+	TARGET.FaxNumber != SOURCE.FaxNumber OR
+	TARGET.WebsiteURL != SOURCE.WebsiteURL OR
+	TARGET.DeliveryAddressLine1 != SOURCE.DeliveryAddressLine1 OR
+	TARGET.DeliveryAddressLine2 != SOURCE.DeliveryAddressLine2 OR
+	TARGET.DeliveryPostalCode != SOURCE.DeliveryPostalCode OR
+	TARGET.DeliveryLocation != SOURCE.DeliveryLocation OR
+	TARGET.PostalAddressLine1 != SOURCE.PostalAddressLine1 OR
+	TARGET.PostalAddressLine2 != SOURCE.PostalAddressLine2 OR
+	TARGET.PostalPostalCode != SOURCE.PostalPostalCode OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 SupplierName = SOURCE.SupplierName 
+		,SupplierCategoryID = SOURCE.SupplierCategoryID 
+		,PrimaryContactPersonID = SOURCE.PrimaryContactPersonID 
+		,AlternateContactPersonID = SOURCE.AlternateContactPersonID 
+		,DeliveryMethodID = SOURCE.DeliveryMethodID 
+		,DeliveryCityID = SOURCE.DeliveryCityID 
+		,PostalCityID = SOURCE.PostalCityID 
+		,SupplierReference = SOURCE.SupplierReference 
+		,BankAccountName = SOURCE.BankAccountName 
+		,BankAccountBranch = SOURCE.BankAccountBranch		
+		,BankAccountCode = SOURCE.BankAccountCode
+		,BankAccountNumber = SOURCE.BankAccountNumber
+		,BankInternationalCode = SOURCE.BankInternationalCode
+		,PaymentDays = SOURCE.PaymentDays
+		,InternalComments = SOURCE.InternalComments
+		,PhoneNumber = SOURCE.PhoneNumber
+		,FaxNumber = SOURCE.FaxNumber
+		,WebsiteURL = SOURCE.WebsiteURL
+		,DeliveryAddressLine1 = SOURCE.DeliveryAddressLine1
+		,DeliveryAddressLine2 = SOURCE.DeliveryAddressLine2
+		,DeliveryPostalCode = SOURCE.DeliveryPostalCode
+		,DeliveryLocation = SOURCE.DeliveryLocation
+		,PostalAddressLine1 = SOURCE.PostalAddressLine1
+		,PostalAddressLine2 = SOURCE.PostalAddressLine2
+		,PostalPostalCode = SOURCE.PostalPostalCode
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.SupplierID,SOURCE.SupplierName,SOURCE.SupplierCategoryID,SOURCE.PrimaryContactPersonID,SOURCE.AlternateContactPersonID,SOURCE.DeliveryMethodID,SOURCE.DeliveryCityID,SOURCE.PostalCityID,SOURCE.SupplierReference,SOURCE.BankAccountName
+		      ,SOURCE.BankAccountBranch,SOURCE.BankAccountCode,SOURCE.BankAccountNumber,SOURCE.BankInternationalCode,SOURCE.PaymentDays,SOURCE.InternalComments,SOURCE.PhoneNumber,SOURCE.FaxNumber,SOURCE.WebsiteURL,SOURCE.DeliveryAddressLine1,SOURCE.DeliveryAddressLine2,SOURCE.DeliveryPostalCode,SOURCE.DeliveryLocation,SOURCE.PostalAddressLine1,SOURCE.PostalAddressLine2,SOURCE.PostalPostalCode,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_Suppliers"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_Suppliers">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_Suppliers AS 
+Select * from Staging.Suppliers STAGE
+WHERE STAGE.SupplierID NOT IN (Select SupplierID from Temporal.Suppliers) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.Suppliers AS TARGET
+USING TMP_DELETE_Suppliers SOURCE
+	ON SOURCE.SupplierID = TARGET.SupplierID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Purchasing_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="Import_SupplierCategories">
+        <sqoop xmlns="uri:oozie:sqoop-action:0.4">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <arg>import</arg>
+            <arg>--connect</arg>
+            <arg>jdbc:sqlserver://disserationsvr.database.windows.net;databaseName=WideWorldImporters</arg>
+            <arg>--username</arg>
+            <arg>dissertationadmin</arg>
+            <arg>-password</arg>
+            <arg>Password</arg>
+            <arg>--delete-target-dir</arg>
+            <arg>--target-dir</arg>
+            <arg>/user/sqoop_import/SupplierCategories</arg>
+            <arg>--query</arg>
+            <arg>SELECT [SupplierCategoryID]       ,[SupplierCategoryName]       ,[LastEditedBy]   FROM [Purchasing].[SupplierCategories] WHERE $CONDITIONS</arg>
+            <arg>-m</arg>
+            <arg>1</arg>
+            <arg>-null-string</arg>
+            <arg>''</arg>
+            <arg>-null-non-string</arg>
+            <arg>''</arg>
+            <arg>--hive-import</arg>
+            <arg>--hive-overwrite</arg>
+            <arg>--hive-table</arg>
+            <arg>TEMPORAL.SupplierCategories</arg>
+        </sqoop>
+        <ok to="Merge_SupplierCategories"/>
+        <error to="kill"/>
+    </action>
+    <action name="Merge_SupplierCategories">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TABLE IF NOT EXISTS Staging.SupplierCategories STORED AS ORC  AS SELECT *, 'I' as ct_operation, from_unixtime(unix_timestamp()) as ct_modifydate FROM Temporal.SupplierCategories where 1=0;
+ALTER TABLE Staging.SupplierCategories CLUSTERED BY(SupplierCategoryID) INTO 5 BUCKETS;
+ALTER TABLE Staging.SupplierCategories SET TBLPROPERTIES ('transactional'='true');
+
+MERGE INTO Staging.SupplierCategories AS TARGET
+USING (
+SELECT SupplierCategoryID as join_key, TEMP.* from Temporal.SupplierCategories TEMP 
+
+UNION ALL 
+
+SELECT NULL as join_key, 
+	   TEMP.* from Temporal.SupplierCategories AS TEMP JOIN Staging.SupplierCategories STAGE ON TEMP.SupplierCategoryID = STAGE.SupplierCategoryID 
+	   WHERE (TEMP.SupplierCategoryName != STAGE.SupplierCategoryName OR
+	          TEMP.LastEditedBy != STAGE.LastEditedBy) 
+			  AND CT_Operation = 'I') AS SOURCE
+	ON SOURCE.join_key = TARGET.SupplierCategoryID
+	
+WHEN MATCHED AND (
+	TARGET.SupplierCategoryName != SOURCE.SupplierCategoryName OR
+	TARGET.LastEditedBy != SOURCE.LastEditedBy)	THEN UPDATE SET
+		 SupplierCategoryName = SOURCE.SupplierCategoryName 
+		,LastEditedBy = SOURCE.LastEditedBy
+		,ct_operation = 'U'
+		
+WHEN NOT MATCHED THEN 
+	INSERT VALUES (SOURCE.SupplierCategoryID,SOURCE.SupplierCategoryName,SOURCE.LastEditedBy,'I', from_unixtime(unix_timestamp()));</query>
+        </hive>
+        <ok to="Delete_SupplierCategories"/>
+        <error to="kill"/>
+    </action>
+    <action name="Delete_SupplierCategories">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>CREATE TEMPORARY TABLE TMP_DELETE_SupplierCategories AS 
+Select * from Staging.SupplierCategories STAGE
+WHERE STAGE.SupplierCategoryID NOT IN (Select SupplierCategoryID from Temporal.SupplierCategories) AND STAGE.ct_operation != 'D';
+
+
+MERGE INTO Staging.SupplierCategories AS TARGET
+USING TMP_DELETE_SupplierCategories SOURCE
+	ON SOURCE.SupplierCategoryID = TARGET.SupplierCategoryID
+	WHEN MATCHED THEN UPDATE SET 
+		 ct_operation = 'D'
+		,ct_modifydate = from_unixtime(unix_timestamp());</query>
+        </hive>
+        <ok to="Purchasing_end"/>
+        <error to="kill"/>
+    </action>
+    <kill name="kill">
+        <message>${wf:errorMessage(wf:lastErrorNode())}</message>
+    </kill>
+    <end name="end"/>
+</workflow-app>

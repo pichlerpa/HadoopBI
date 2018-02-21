@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<workflow-app xmlns="uri:oozie:workflow:0.5" name="MAIN">
+    <start to="ETL_start"/>
+    <fork name="ETL_start">
+        <path start="ETL_Sales"/>
+        <path start="ETL_Application"/>
+        <path start="ETL_Warehouse"/>
+    </fork>
+    <fork name="DIM_start">
+        <path start="DIM_Supplier"/>
+        <path start="DIM_City"/>
+        <path start="DIM_Customer"/>
+        <path start="DIM_Employee"/>
+        <path start="DIM_PaymentMethod"/>
+        <path start="DIM_StockItem"/>
+        <path start="DIM_TransactionType"/>
+    </fork>
+    <fork name="FACT_start">
+        <path start="FACT_Movement"/>
+        <path start="FACT_Order"/>
+        <path start="FACT_Purchase"/>
+        <path start="FACT_Sale"/>
+        <path start="FACT_StockHolding"/>
+        <path start="FACT_Transaction"/>
+    </fork>
+    <join name="ETL_end" to="DIM_start"/>
+    <join name="DIM_end" to="FACT_start"/>
+    <join name="FACT_end" to="end"/>
+    <action name="ETL_Sales">
+        <sub-workflow>
+            <app-path>/user/oozie/Workflow_Sales/workflow.xml</app-path>
+            <propagate-configuration/>
+        </sub-workflow>
+        <ok to="ETL_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_Supplier">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_SUPPLIER;
+CREATE TABLE datawarehouse.DIM_SUPPLIER AS
+
+SELECT 0 `Supplier Key`, 0 `WWI Supplier ID`, 'Unknown' Supplier, 'N/A' Category, 'N/A' `Primary Contact`, 'N/A' `Supplier Reference`,
+         0 `Payment Days`, 'N/A' `Postal Code`
+		 ,to_date('1900-01-01') CT_DateFrom
+         ,to_date('9999-12-31') CT_DateTo		 
+  
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Supplier Key`, s.SupplierID `WWI Supplier ID`, s.SupplierName Supplier, sc.SupplierCategoryName Category, p.FullName `Primary Contact`, s.SupplierReference `Supplier Reference`,
+        s.PaymentDays `Payment Days`, s.DeliveryPostalCode `Postal Code`
+		,to_date(COALESCE(LAG(s.CT_ModifyDate) OVER (PARTITION BY s.SupplierID  Order by s.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+		,to_date(COALESCE(LEAD(s.CT_ModifyDate) OVER (PARTITION BY s.SupplierID  Order by s.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+        FROM Staging.Suppliers s
+        INNER JOIN Staging.SupplierCategories AS sc
+        ON s.SupplierCategoryID = sc.SupplierCategoryID
+        INNER JOIN Staging.People p
+        ON s.PrimaryContactPersonID = p.PersonID</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_Movement">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.FACT_MOVEMENT;
+CREATE TABLE datawarehouse.FACT_MOVEMENT AS
+SELECT to_date(TransactionOccurredWhen) AS `Date Key`,
+           StockItemTransactionID AS `WWI Stock Item Transaction ID`,
+           InvoiceID AS `WWI Invoice ID`,
+           PurchaseOrderID AS `WWI Purchase Order ID`,
+           CAST(Quantity AS int) AS Quantity,
+           StockItemID AS `WWI Stock Item ID`,
+           CustomerID AS `WWI Customer ID`,
+           SupplierID AS `WWI Supplier ID`,
+           TransactionTypeID AS `WWI Transaction Type ID`,
+           TransactionOccurredWhen AS `Transaction Occurred When`
+FROM Staging.StockItemTransactions where CT_Operation = 'I'
+ORDER BY `WWI Stock Item Transaction ID`;</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_Order">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.FACT_ORDER;
+CREATE TABLE datawarehouse.FACT_ORDER AS
+
+    SELECT ROW_NUMBER() OVER() AS `Order Key`,
+	       COALESCE(dwhc.`City Key`,0) as `City Key`,
+		   COALESCE(dwhcu.`Customer Key`,0) as `Customer Key`,
+		   COALESCE(dwhi.`Stock Item Key`,0) as `Stock Item Key`,
+		   to_date(o.OrderDate) AS `Order Date Key`,
+           to_date(ol.PickingCompletedWhen) AS `Picked Date Key`,
+		   dwhe.`Employee Key` as `Salesperson Key`,
+		   dwhem.`Employee Key` as `Picker Key`,
+           o.OrderID AS `WWI Order ID`,
+           o.BackorderOrderID AS `WWI Backorder ID`,
+           ol.`Description`,
+           pt.PackageTypeName AS Package,
+           ol.Quantity AS Quantity,
+           ol.UnitPrice AS `Unit Price`,
+           ol.TaxRate AS `Tax Rate`,
+           ROUND(ol.Quantity * ol.UnitPrice, 2) AS `Total Excluding Tax`,
+           ROUND(ol.Quantity * ol.UnitPrice * ol.TaxRate / 100.0, 2) AS `Tax Amount`,
+           ROUND(ol.Quantity * ol.UnitPrice, 2) + ROUND(ol.Quantity * ol.UnitPrice * ol.TaxRate / 100.0, 2) AS `Total Including Tax`
+    FROM Staging.Orders AS o
+    INNER JOIN (Select * from Staging.OrderLines where CT_Operation = 'I') AS ol
+    ON o.OrderID = ol.OrderID
+    INNER JOIN (Select * from Staging.PackageTypes where CT_Operation = 'I') AS pt
+    ON ol.PackageTypeID = pt.PackageTypeID
+	INNER JOIN (Select * from Staging.Customers where CT_Operation = 'I') AS c
+    ON c.CustomerID = o.CustomerID
+	LEFT JOIN datawarehouse.DIM_city dwhc
+	ON dwhc.`WWI City ID` = c.DeliveryCityID
+	LEFT JOIN datawarehouse.DIM_customer dwhcu
+	ON dwhcu.`WWI Customer ID` = c.CustomerID
+	LEFT JOIN datawarehouse.DIM_stockitem dwhi
+	ON dwhi.`WWI Stock Item ID` = ol.StockItemID
+	LEFT JOIN datawarehouse.DIM_employee dwhe
+	ON dwhe.`WWI Employee ID` = o.SalespersonPersonID
+	LEFT JOIN datawarehouse.DIM_employee dwhem
+	ON dwhem.`WWI Employee ID` = o.PickedByPersonID
+	WHERE o.CT_Operation = 'I'
+	AND (to_date(o.lasteditedwhen) BETWEEN dwhc.CT_DateFrom AND dwhc.CT_DateTo) OR (dwhc.CT_DateFrom IS NULL AND dwhc.CT_DateTo IS NULL)
+	AND (to_date(o.lasteditedwhen) BETWEEN dwhcu.CT_DateFrom AND dwhcu.CT_DateTo) OR (dwhcu.CT_DateFrom IS NULL AND dwhcu.CT_DateTo IS NULL)
+	AND (to_date(o.lasteditedwhen) BETWEEN dwhi.CT_DateFrom AND dwhi.CT_DateTo) OR (dwhi.CT_DateFrom IS NULL AND dwhi.CT_DateTo IS NULL)
+	AND (to_date(o.lasteditedwhen) BETWEEN dwhe.CT_DateFrom AND dwhe.CT_DateTo) OR (dwhe.CT_DateFrom IS NULL AND dwhe.CT_DateTo IS NULL)
+	AND (to_date(o.lasteditedwhen) BETWEEN dwhem.CT_DateFrom AND dwhem.CT_DateTo) OR (dwhem.CT_DateFrom IS NULL AND dwhem.CT_DateTo IS NULL)
+	ORDER BY `WWI Order ID`</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_Purchase">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>	DROP TABLE IF EXISTS datawarehouse.FACT_PURCHASE;
+CREATE TABLE datawarehouse.FACT_PURCHASE AS
+
+SELECT ROW_NUMBER() OVER() AS `Purchase Key`,
+		   to_date(po.OrderDate) AS `Date Key`,
+		   COALESCE(dwhs.`Supplier Key`,0) `Supplier Key`,
+		   COALESCE(dwhst.`Stock Item Key`,0) AS `Stock Item Key`,
+           po.PurchaseOrderID AS `WWI Purchase Order ID`,
+           pol.OrderedOuters AS `Ordered Outers`,
+           pol.OrderedOuters * si.QuantityPerOuter AS `Ordered Quantity`,
+           pol.ReceivedOuters AS `Received Outers`,
+           pt.PackageTypeName AS Package,
+           pol.IsOrderLineFinalized AS `Is Order Finalized`
+    FROM Staging.PurchaseOrders AS po
+    INNER JOIN (Select * from Staging.PurchaseOrderLines where CT_Operation = 'I') AS pol
+    ON po.PurchaseOrderID = pol.PurchaseOrderID
+	INNER JOIN (Select * from Staging.StockItems where CT_Operation = 'I') AS si
+    ON pol.StockItemID = si.StockItemID
+    INNER JOIN (Select * from Staging.PackageTypes where CT_Operation = 'I') AS pt
+    ON pol.PackageTypeID = pt.PackageTypeID
+	LEFT JOIN datawarehouse.DIM_Supplier AS dwhs
+    ON dwhs.`WWI Supplier ID` =  po.SupplierID
+	LEFT JOIN datawarehouse.DIM_StockItem AS dwhst
+    ON dwhst.`WWI Stock Item ID` =  pol.StockItemID
+	WHERE po.CT_Operation = 'I'
+	AND (to_date(po.lasteditedwhen) BETWEEN dwhs.CT_DateFrom AND dwhs.CT_DateTo) OR (dwhs.CT_DateFrom IS NULL AND dwhs.CT_DateTo IS NULL)
+	AND (to_date(po.lasteditedwhen) BETWEEN dwhst.CT_DateFrom AND dwhst.CT_DateTo) OR (dwhst.CT_DateFrom IS NULL AND dwhst.CT_DateTo IS NULL)
+    ORDER BY `WWI Purchase Order ID`;</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_Sale">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>	DROP TABLE IF EXISTS datawarehouse.FACT_SALE;
+CREATE TABLE datawarehouse.FACT_SALE AS
+
+SELECT ROW_NUMBER() OVER() AS `Sale Key`,
+		   COALESCE(dwhc.`City Key`,0) AS `City Key`,
+		   COALESCE(dwhcu.`Customer Key`,0) AS `Customer Key`,
+		   COALESCE(dwhcus.`Customer Key`,0) AS `Bill To Customer Key`,
+		   COALESCE(dwhs.`Stock Item Key`,0) AS `Stock Item Key`,		   
+		   to_date(i.InvoiceDate) AS `Invoice Date Key`,
+           to_date(i.ConfirmedDeliveryTime) AS `Delivery Date Key`,
+		   dwhe.`Employee Key` AS `Salesperson Key`,
+           i.InvoiceID AS `WWI Invoice ID`,
+           il.`Description`,
+           pt.PackageTypeName AS Package,
+           il.Quantity,
+           il.UnitPrice AS `Unit Price`,
+           il.TaxRate AS `Tax Rate`,
+           il.ExtendedPrice - il.TaxAmount AS `Total Excluding Tax`,
+           il.TaxAmount AS `Tax Amount`,
+           il.LineProfit AS Profit,
+           il.ExtendedPrice AS `Total Including Tax`,
+           CASE WHEN si.IsChillerStock = 0 THEN il.Quantity ELSE 0 END AS `Total Dry Items`,
+           CASE WHEN si.IsChillerStock != 0 THEN il.Quantity ELSE 0 END AS `Total Chiller Items`
+    FROM Staging.Invoices AS i
+    INNER JOIN (Select * from Staging.InvoiceLines where CT_Operation = 'I') AS il
+    ON i.InvoiceID = il.InvoiceID
+    INNER JOIN (Select * from Staging.StockItems where CT_Operation = 'I') AS si
+    ON il.StockItemID = si.StockItemID
+    INNER JOIN (Select * from Staging.PackageTypes where CT_Operation = 'I') AS pt
+    ON il.PackageTypeID = pt.PackageTypeID
+    INNER JOIN (Select * from Staging.Customers where CT_Operation = 'I') AS c
+    ON i.CustomerID = c.CustomerID
+    INNER JOIN (Select * from Staging.Customers where CT_Operation = 'I') AS bt
+    ON i.BillToCustomerID = bt.CustomerID
+	LEFT JOIN datawarehouse.DIM_City AS dwhc
+    ON dwhc.`WWI City ID` = c.DeliveryCityID
+	LEFT JOIN datawarehouse.DIM_Customer AS dwhcu
+    ON dwhcu.`WWI Customer ID` =  i.CustomerID
+	LEFT JOIN datawarehouse.DIM_Customer AS dwhcus
+    ON dwhcus.`WWI Customer ID` =  i.BillToCustomerID
+	LEFT JOIN datawarehouse.DIM_StockItem AS dwhs
+    ON dwhs.`WWI Stock Item ID` =  il.StockItemID
+	LEFT JOIN datawarehouse.DIM_Employee AS dwhe
+    ON dwhe.`WWI Employee ID` =  i.SalespersonPersonID	
+	WHERE i.CT_Operation = 'I'
+	AND (to_date(i.lasteditedwhen) BETWEEN dwhc.CT_DateFrom AND dwhc.CT_DateTo) OR (dwhc.CT_DateFrom IS NULL AND dwhc.CT_DateTo IS NULL)
+	AND (to_date(i.lasteditedwhen) BETWEEN dwhcu.CT_DateFrom AND dwhcu.CT_DateTo) OR (dwhcu.CT_DateFrom IS NULL AND dwhcu.CT_DateTo IS NULL)
+	AND (to_date(i.lasteditedwhen) BETWEEN dwhcus.CT_DateFrom AND dwhcus.CT_DateTo) OR (dwhcus.CT_DateFrom IS NULL AND dwhcus.CT_DateTo IS NULL)
+	AND (to_date(i.lasteditedwhen) BETWEEN dwhs.CT_DateFrom AND dwhs.CT_DateTo) OR (dwhs.CT_DateFrom IS NULL AND dwhs.CT_DateTo IS NULL)
+    AND (to_date(i.lasteditedwhen) BETWEEN dwhe.CT_DateFrom AND dwhe.CT_DateTo) OR (dwhe.CT_DateFrom IS NULL AND dwhe.CT_DateTo IS NULL)
+    ORDER BY `WWI Invoice ID`</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_StockHolding">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.FACT_STOCKHOLDING;
+CREATE TABLE datawarehouse.FACT_STOCKHOLDING AS
+SELECT ROW_NUMBER() OVER() AS `Stock Holding Key`,
+		   sih.StockItemID AS `Stock Item Key`,
+		   sih.QuantityOnHand AS `Quantity On Hand`,
+           sih.BinLocation AS `Bin Location`,
+           sih.LastStocktakeQuantity AS `Last Stocktake Quantity`,
+           sih.LastCostPrice AS `Last Cost Price`,
+           sih.ReorderLevel AS `Reorder Level`,
+           sih.TargetStockLevel AS `Target Stock Level`
+    FROM Staging.StockItemHoldings AS sih
+	WHERE sih.CT_Operation = 'I'
+    ORDER BY `Stock Item Key`</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="FACT_Transaction">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.FACT_TRANSACTION;
+CREATE TABLE datawarehouse.FACT_TRANSACTION AS
+
+SELECT ROW_NUMBER() OVER() AS `Sale Key`, * FROM (
+SELECT to_date(ct.TransactionDate) AS `Date Key`,
+	       COALESCE(dwhcu.`Customer Key`,0) AS `CustomerKey`,		   
+		   COALESCE(dwhcus.`Customer Key`,0) AS `Bill To Customer Key`,
+		   NULL AS `Supplier Key`,
+		   COALESCE(dwht.`Transaction Type Key`,0) AS `Transaction Type Key`,
+		   COALESCE(dwhp.`Payment Method Key`,0) AS `Payment Method Key`,	
+           ct.CustomerTransactionID AS `WWI Customer Transaction ID`,
+           CAST(NULL AS int) AS `WWI Supplier Transaction ID`,
+           ct.InvoiceID AS `WWI Invoice ID`,
+           CAST(NULL AS int) AS `WWI Purchase Order ID`,
+           CAST(NULL AS varchar(20)) AS `Supplier Invoice Number`,
+           ct.AmountExcludingTax AS `Total Excluding Tax`,
+           ct.TaxAmount AS `Tax Amount`,
+           ct.TransactionAmount AS `Total Including Tax`,
+           ct.OutstandingBalance AS `Outstanding Balance`,
+           ct.IsFinalized AS `Is Finalized`
+    FROM Staging.CustomerTransactions AS ct
+    LEFT OUTER JOIN (Select * from Staging.Invoices where CT_Operation = 'I') AS i
+    ON ct.InvoiceID = i.InvoiceID
+	LEFT JOIN datawarehouse.DIM_Customer AS dwhcu
+    ON dwhcu.`WWI Customer ID` =  COALESCE(i.CustomerID, ct.CustomerID)
+	LEFT JOIN datawarehouse.DIM_Customer AS dwhcus
+    ON dwhcus.`WWI Customer ID` =  ct.CustomerID
+	LEFT JOIN datawarehouse.DIM_TransactionType AS dwht
+    ON dwht.`WWI Transaction Type ID` =  ct.TransactionTypeID
+	LEFT JOIN datawarehouse.DIM_PaymentMethod AS dwhp
+    ON dwhp.`WWI Payment Method ID` =  ct.PaymentMethodID	
+	WHERE ct.CT_Operation = 'I'
+	AND (to_date(ct.lasteditedwhen) BETWEEN dwhcu.CT_DateFrom and dwhcu.CT_DateTo) OR (dwhcu.CT_DateFrom IS NULL AND dwhcu.CT_DateTo IS NULL)
+    AND (to_date(ct.lasteditedwhen) BETWEEN dwhcus.CT_DateFrom and dwhcus.CT_DateTo) OR (dwhcus.CT_DateFrom IS NULL AND dwhcus.CT_DateTo IS NULL)
+    AND (to_date(ct.lasteditedwhen) BETWEEN dwht.CT_DateFrom and dwht.CT_DateTo) OR (dwht.CT_DateFrom IS NULL AND dwht.CT_DateTo IS NULL)
+    AND (to_date(ct.lasteditedwhen) BETWEEN dwhp.CT_DateFrom and dwhp.CT_DateTo) OR (dwhp.CT_DateFrom IS NULL AND dwhp.CT_DateTo IS NULL)
+
+	UNION ALL
+
+    SELECT to_date(st.TransactionDate) `Date Key`,
+		   NULL AS `CustomerKey`,		   
+		   NULL AS `Bill To Customer Key`,
+		   COALESCE(dwhs.`Supplier Key`,0) `Supplier Key`,
+		   COALESCE(dwht.`Transaction Type Key`,0) AS `Transaction Type Key`,
+		   COALESCE(dwhp.`Payment Method Key`,0) AS `Payment Method Key`,
+           CAST(NULL AS int) AS `WWI Customer Transaction ID`,
+           st.SupplierTransactionID AS `WWI Supplier Transaction ID`,
+           CAST(NULL AS int) AS `WWI Invoice ID`,
+           st.PurchaseOrderID AS `WWI Purchase Order ID`,
+           st.SupplierInvoiceNumber AS `Supplier Invoice Number`,
+           st.AmountExcludingTax AS `Total Excluding Tax`,
+           st.TaxAmount AS `Tax Amount`,
+           st.TransactionAmount AS `Total Including Tax`,
+           st.OutstandingBalance AS `Outstanding Balance`,
+           st.IsFinalized AS `Is Finalized`
+    FROM Staging.SupplierTransactions AS st
+	LEFT JOIN datawarehouse.DIM_Supplier AS dwhs
+    ON dwhs.`WWI Supplier ID` =  st.SupplierID
+	LEFT JOIN datawarehouse.DIM_TransactionType AS dwht
+    ON dwht.`WWI Transaction Type ID` =  st.TransactionTypeID
+	LEFT JOIN datawarehouse.DIM_PaymentMethod AS dwhp
+    ON dwhp.`WWI Payment Method ID` =  st.PaymentMethodID
+	WHERE st.CT_Operation = 'I'
+	AND (to_date(st.lasteditedwhen) BETWEEN dwhs.CT_DateFrom and dwhs.CT_DateTo) OR (dwhs.CT_DateFrom IS NULL AND dwhs.CT_DateTo IS NULL)
+    AND (to_date(st.lasteditedwhen) BETWEEN dwht.CT_DateFrom and dwht.CT_DateTo) OR (dwht.CT_DateFrom IS NULL AND dwht.CT_DateTo IS NULL)
+    AND (to_date(st.lasteditedwhen) BETWEEN dwhp.CT_DateFrom and dwhp.CT_DateTo	) OR (dwhp.CT_DateFrom IS NULL AND dwhp.CT_DateTo IS NULL)
+) FACT_TRANSACTION</query>
+        </hive>
+        <ok to="FACT_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_City">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_CITY;
+CREATE TABLE datawarehouse.DIM_CITY AS
+
+SELECT 0 `City Key`, 0 `WWI City ID`, 'Unknown' City,'N/A' `State Province`,'N/A' Country,'N/A' Continent,'N/A' `Sales Territory`,'N/A' Region,'N/A' Subregion,'N/A' Location, 0 `Latest Recorded Population`
+  ,to_date('1900-01-01') CT_DateFrom
+  ,to_date('9999-12-31') CT_DateTo
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `City Key`, c.CityID `WWI City ID`, c.CityName City, sp.StateProvinceName `State Province`, co.CountryName Country, 
+co.Continent Continent, sp.SalesTerritory `Sales Territory`, co.Region Region, co.Subregion Subregion,c.Location Location, COALESCE(c.LatestRecordedPopulation, 0) `Latest Recorded Population`
+  ,to_date(COALESCE(LAG(c.CT_ModifyDate) OVER (PARTITION BY c.CityID Order by c.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+  ,to_date(COALESCE(LEAD(c.CT_ModifyDate) OVER (PARTITION BY c.CityID Order by c.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+   FROM Staging.Cities AS c
+        INNER JOIN Staging.StateProvinces AS sp
+        ON c.StateProvinceID = sp.StateProvinceID
+        INNER JOIN Staging.Countries AS co
+        ON sp.CountryID = co.CountryID</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_Customer">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_CUSTOMER;
+CREATE TABLE datawarehouse.DIM_CUSTOMER AS
+
+SELECT 0 `Customer Key`, 0 `WWI Customer ID`, 'Unknown' Customer,'N/A' `Bill to Customer`,'N/A' `Category`,'N/A' `Buying Group`,'N/A' `Primary Contact`,'N/A'`Postal Code`
+		 ,to_date('1900-01-01') CT_DateFrom
+         ,to_date('9999-12-31') CT_DateTo		
+		 
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Customer Key`, c.CustomerID `WWI Customer ID`, c.CustomerName Customer, bt.CustomerName `Bill to Customer`, cc.CustomerCategoryName `Category`,bg.BuyingGroupName `Buying Group`, p.FullName `Primary Contact`, c.DeliveryPostalCode `Postal Code`
+		,to_date(COALESCE(LAG(c.CT_ModifyDate) OVER (PARTITION BY c.CustomerID  Order by c.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+		,to_date(COALESCE(LEAD(c.CT_ModifyDate) OVER (PARTITION BY c.CustomerID  Order by c.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+  FROM Staging.Customers AS c
+        INNER JOIN Staging.BuyingGroups AS bg
+        ON c.BuyingGroupID = bg.BuyingGroupID
+        INNER JOIN Staging.CustomerCategories AS cc
+        ON c.CustomerCategoryID = cc.CustomerCategoryID
+        INNER JOIN Staging.Customers AS bt
+        ON c.BillToCustomerID = bt.CustomerID
+        INNER JOIN Staging.People AS p
+        ON c.PrimaryContactPersonID = p.PersonID</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_Employee">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_EMPLOYEE;
+CREATE TABLE datawarehouse.DIM_EMPLOYEE AS
+
+SELECT 0 `Employee Key`, 0 `WWI Employee ID`, 'Unknown' Employee,'N/A' `Preferred Name`,false `Is Salesperson`
+		 ,to_date('1900-01-01') CT_DateFrom
+         ,to_date('9999-12-31') CT_DateTo	
+		 
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Employee Key`, p.PersonID `WWI Employee ID`, p.FullName Employee, p.PreferredName `Preferred Name`, p.IsSalesperson `Is Salesperson`
+		,to_date(COALESCE(LAG(p.CT_ModifyDate) OVER (PARTITION BY p.PersonID  Order by p.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+		,to_date(COALESCE(LEAD(p.CT_ModifyDate) OVER (PARTITION BY p.PersonID  Order by p.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+      FROM Staging.People AS p where p.IsEmployee != 0</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_PaymentMethod">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_PaymentMethod;
+CREATE TABLE datawarehouse.DIM_PaymentMethod AS
+
+SELECT 0 `Payment Method Key`, 0 `WWI Payment Method ID`, 'Unknown' `Payment Method`
+  ,to_date('1900-01-01') CT_DateFrom
+  ,to_date('9999-12-31') CT_DateTo
+
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Payment Method Key`, p.PaymentMethodID `WWI Payment Method ID`, p.PaymentMethodName `Payment Method`
+  ,to_date(COALESCE(LAG(p.CT_ModifyDate) OVER (PARTITION BY p.PaymentMethodID Order by p.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+  ,to_date(COALESCE(LEAD(p.CT_ModifyDate) OVER (PARTITION BY p.PaymentMethodID Order by p.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+      FROM Staging.PaymentMethods AS p</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_StockItem">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_STOCKITEM;
+CREATE TABLE datawarehouse.DIM_STOCKITEM AS
+
+SELECT 0 `Stock Item Key`,0 `WWI Stock Item ID`, 'Unknown' `Stock Item`, 'N/A' Color, 'N/A' `Selling Package`,
+               'N/A' `Buying Package`, 'N/A' Brand, 'N/A' Size, 0 `Lead Time Days`, 0 `Quantity Per Outer`,
+               false `Is Chiller Stock`, 'N/A' Barcode, 0 `Tax Rate`, 0`Unit Price`,0 `Recommended Retail Price`,
+               0 `Typical Weight Per Unit`
+			     ,to_date('1900-01-01') CT_DateFrom
+  ,to_date('9999-12-31') CT_DateTo
+
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Stock Item Key`,si.StockItemID `WWI Stock Item ID`, si.StockItemName `Stock Item`, COALESCE(c.ColorName,'N/A') Color, spt.PackageTypeName `Selling Package`,
+               bpt.PackageTypeName `Buying Package`, COALESCE(si.Brand,'N/A') Brand, COALESCE(si.Size,'N/A') Size, si.LeadTimeDays `Lead Time Days`, si.QuantityPerOuter `Quantity Per Outer`,
+               si.IsChillerStock `Is Chiller Stock`, COALESCE(si.Barcode,'N/A') Barcode, si.LeadTimeDays `Tax Rate`, si.UnitPrice `Unit Price`, si.RecommendedRetailPrice `Recommended Retail Price`,			   
+               si.TypicalWeightPerUnit `Typical Weight Per Unit`
+			     ,to_date(COALESCE(LAG(si.CT_ModifyDate) OVER (PARTITION BY si.StockItemID  Order by si.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+				 ,to_date(COALESCE(LEAD(si.CT_ModifyDate) OVER (PARTITION BY si.StockItemID  Order by si.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+        FROM Staging.StockItems AS si
+        INNER JOIN Staging.PackageTypes AS spt
+        ON si.UnitPackageID = spt.PackageTypeID
+        INNER JOIN Staging.PackageTypes AS bpt
+        ON si.OuterPackageID = bpt.PackageTypeID
+        LEFT OUTER JOIN Staging.Colors AS c
+        ON si.ColorID = c.ColorID</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="DIM_TransactionType">
+        <hive xmlns="uri:oozie:hive-action:0.6">
+            <job-tracker>${resourceManager}</job-tracker>
+            <name-node>${nameNode}</name-node>
+            <query>DROP TABLE IF EXISTS datawarehouse.DIM_TRANSACTIONTYPE;
+CREATE TABLE datawarehouse.DIM_TRANSACTIONTYPE AS
+
+SELECT 0 `Transaction Type Key`, 0 `WWI Transaction Type ID`, 'Unknown' `Transaction Type`
+  ,to_date('1900-01-01') CT_DateFrom
+  ,to_date('9999-12-31') CT_DateTo
+
+UNION ALL
+
+SELECT ROW_NUMBER() OVER() `Transaction Type Key`, p.TransactionTypeID `WWI Transaction Type ID`,p.TransactionTypeName `Transaction Type`
+  ,to_date(COALESCE(LAG(p.CT_ModifyDate) OVER (PARTITION BY p.TransactionTypeID Order by p.CT_ModifyDate),'1900-01-01'))  CT_DateFrom
+  ,to_date(COALESCE(LEAD(p.CT_ModifyDate) OVER (PARTITION BY p.TransactionTypeID Order by p.CT_ModifyDate),'9999-12-31'))  CT_DateTo
+    FROM Staging.TransactionTypes AS p</query>
+        </hive>
+        <ok to="DIM_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="ETL_Application">
+        <sub-workflow>
+            <app-path>/user/oozie/Workflow_Application/workflow.xml</app-path>
+            <propagate-configuration/>
+        </sub-workflow>
+        <ok to="ETL_Purchasing"/>
+        <error to="kill"/>
+    </action>
+    <action name="ETL_Purchasing">
+        <sub-workflow>
+            <app-path>/user/oozie/Workflow_Purchasing/workflow.xml</app-path>
+            <propagate-configuration/>
+        </sub-workflow>
+        <ok to="ETL_end"/>
+        <error to="kill"/>
+    </action>
+    <action name="ETL_Warehouse">
+        <sub-workflow>
+            <app-path>/user/oozie/Worklow_Warehouse/workflow.xml</app-path>
+            <propagate-configuration/>
+        </sub-workflow>
+        <ok to="ETL_end"/>
+        <error to="kill"/>
+    </action>
+    <kill name="kill">
+        <message>${wf:errorMessage(wf:lastErrorNode())}</message>
+    </kill>
+    <end name="end"/>
+</workflow-app>
